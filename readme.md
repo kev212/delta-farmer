@@ -18,7 +18,7 @@ Automated delta-neutral trading for crypto points farming. Execute hedged strate
 | --------------------------------------- | ------ | ----------- | ----------------------------- |
 | [Pacifica](https://pacifica.fi)         | Solana | Ready       | Perpetuals DEX                |
 | [Omni](https://omni.variational.io)     | EVM    | Ready       | Perpetuals DEX by Variational |
-| [Ethereal](https://app.ethereal.trade/) | EVM    | Coming Soon | —                             |
+| [Ethereal](https://app.ethereal.trade/) | EVM    | Ready       | Perpetuals DEX                |
 | [Nado](https://app.nado.xyz/)           | EVM    | Coming Soon | —                             |
 
 ## Installation
@@ -40,32 +40,13 @@ uv sync
 
 ## Quick Start
 
-### Pacifica (Solana)
-
 ```bash
-# Create config
-cp configs.example/pacifica.toml configs/pacifica.toml
-# Edit configs/pacifica.toml with your Solana private keys
+# Replace <app> with: pacifica, omni, ethereal
+cp configs.example/<app>.toml configs/<app>.toml
+# Edit configs/<app>.toml with your private keys
 
-# Encrypt private keys
-uv run -m apps.pacifica config encrypt
-
-# Start trading
-uv run -m apps.pacifica trade
-```
-
-### Omni (EVM)
-
-```bash
-# Create config
-cp configs.example/omni.toml configs/omni.toml
-# Edit configs/omni.toml with your EVM private keys
-
-# Encrypt private keys
-uv run -m apps.omni config encrypt
-
-# Start trading
-uv run -m apps.omni trade
+uv run -m apps.<app> config encrypt  # Encrypt private keys
+uv run -m apps.<app> trade           # Start trading
 ```
 
 ## Usage
@@ -73,7 +54,7 @@ uv run -m apps.omni trade
 All protocols share common commands:
 
 ```bash
-# Replace <app> with: pacifica, omni
+# Replace <app> with: pacifica, omni, ethereal
 
 # Trading
 uv run -m apps.<app> trade          # Start automated trading

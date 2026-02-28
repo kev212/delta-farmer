@@ -184,7 +184,7 @@ async def smoke(client: TradingClient, symbol: str, size_usd: float) -> tuple[in
 
 async def main():
     parser = argparse.ArgumentParser(prog="smoke", description="Smoke test for exchange clients")
-    parser.add_argument("exchange", choices=["omni", "pacifica"])
+    parser.add_argument("exchange", choices=["ethereal", "omni", "pacifica"])
     parser.add_argument("symbol", help="Symbol to test (must NOT be in config markets)")
     parser.add_argument("size", type=float, help="Trade size in USD")
     parser.add_argument(
@@ -201,10 +201,15 @@ async def main():
         args.config = matches[0]
         print(f"config   : {args.config} (auto)")
 
-    if args.exchange == "omni":
-        from apps.omni import Config, client_from_config
-    else:
-        from apps.pacifica import Config, client_from_config
+    match args.exchange:
+        case "ethereal":
+            from apps.ethereal import Config, client_from_config
+        case "omni":
+            from apps.omni import Config, client_from_config
+        case "pacifica":
+            from apps.pacifica import Config, client_from_config
+        case _:
+            parser.error(f"unsupported exchange '{args.exchange}'")
 
     cfg = Config.load(args.config)
     acc_cfg = cfg.accounts[0]

@@ -1,6 +1,6 @@
 # Delta Farmer
 
-Delta-neutral trading bot for multiple exchanges (Omni, Pacifica). Opens opposite positions on different accounts to farm trading volume and points while minimizing directional risk.
+Delta-neutral trading bot for multiple exchanges (Ethereal, Omni, Pacifica). Opens opposite positions on different accounts to farm trading volume and points while minimizing directional risk.
 
 ## Project Structure
 
@@ -21,13 +21,11 @@ utils/          # generic infrastructure (no trading logic)
   logger.py     # loguru logger setup
 
 clients/        # one file per exchange, implements TradingClient protocol
+  ethereal.py   # EVM-based, uses limit orders, signer key support
   omni.py       # EVM-based, limit orders fall back to market internally
   pacifica.py   # Solana-based
 
 apps/           # launchers – one directory per exchange (or strategy)
-  omni/
-  pacifica/
-
 config/         # YAML/TOML config files (gitignored)
 docs/           # additional documentation
 ```
