@@ -1,27 +1,57 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | Don't blame me, blame the API docs
+# Copyright (c) vladkens | MIT License | No AI was harmed making this
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import partial
 
-from core.cli import create_cli
-from core.store import DataStore
-from core.table import AutoTable, Column
-from core.utils import parse_filter, short_addr, to_period_day, to_period_week
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from .client import Client, PointsRecord
-from .config import Config
-from .manager import Manager
+from clients.omni import Client, PointsRecord
+from strategy.models import StrategyConfig, load_config
+from strategy.strategy import DeltaStrategy
+from utils.cli import create_cli
+from utils.crypto import decrypt_value, is_encrypted
+from utils.helpers import parse_filter, short_addr, to_period_day, to_period_week
+from utils.store import DataStore
+from utils.table import AutoTable, Column
 
 # https://docs.variational.io/omni/rewards/points
 # https://omni.variational.io/points (UI counts from -1 week)
 GENESIS = datetime(2025, 12, 17 - 7, tzinfo=timezone.utc)
 
 
+class AccountConfig(BaseModel):
+    name: str
+    privkey: SecretStr = Field(repr=False)
+    proxy: str | None = None
+    enabled: bool = True
+
+    @field_validator("privkey", mode="before")
+    @classmethod
+    def decrypt_privkey(cls, v: str) -> str:
+        return decrypt_value(v) if isinstance(v, str) and is_encrypted(v) else v
+
+
+class Config(StrategyConfig):
+    accounts: list[AccountConfig]
+
+    @classmethod
+    def load(cls, filepath: str):
+        return load_config(cls, filepath)
+
+
+def client_from_config(cfg: AccountConfig) -> Client:
+    return Client(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
+
+
 def load_accs(cfg: Config) -> list[Client]:
-    return [Client.from_config(x) for x in cfg.accounts]
+    return [client_from_config(x) for x in cfg.accounts]
+
+
+def load_trading_clients(cfg: Config) -> list[Client]:
+    return [client_from_config(x) for x in cfg.accounts if x.enabled]
 
 
 async def print_info(accs: list[Client]):
@@ -105,7 +135,7 @@ async def print_stats(accs: list[Client], period="week", filter_period="all", fo
         Column("Trades", "{:,}", total=sum),
         Column("Volume", "{:,.0f}", total=sum),
         Column("Burn", "{:,.2f}", total=sum),
-        Column("Points", "{:,.1f}", total=sum),
+        Column("Points", "{:,.2f}", total=sum),
         Column("P/Price", "{:,.2f}", compute=lambda r: r["Burn"] / r["Points"]),
         Column("V/Price", "{:,.2f}", compute=lambda r: r["Burn"] / r["Volume"] * Decimal(1e5)),
         Column("Total Vol", "{:,.0f}", total=sum, grand_total=False),
@@ -129,6 +159,14 @@ async def print_stats(accs: list[Client], period="week", filter_period="all", fo
     tbl.print()
 
 
+async def close_all(cfg: Config):
+    clients = load_trading_clients(cfg)
+    for client in clients:
+        await client.warmup()
+        await client.cancel_all_orders()
+        await client.close_all_positions()
+
+
 async def main():
     cli = create_cli("omni", "configs/omni.toml", ["privkey"])
 
@@ -141,9 +179,10 @@ async def main():
         case "stats":
             await print_stats(accs, period=cli.group, filter_period=cli.filter, force=cli.sync)
         case "trade":
-            await Manager(cfg).run_trade()
+            strategy = DeltaStrategy(cfg, load_trading_clients(cfg))
+            await strategy.run()
         case "close":
-            await Manager(cfg).close(accs)
+            await close_all(cfg)
 
 
 if __name__ == "__main__":

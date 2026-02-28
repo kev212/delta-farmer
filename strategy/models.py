@@ -8,7 +8,7 @@ from typing import Generic, Type, TypeVar
 from pydantic import BaseModel, Field, GetCoreSchemaHandler, ValidationError, model_validator
 from pydantic_core import core_schema
 
-from core.utils import parse_duration
+from utils.helpers import parse_duration
 
 RangeT = TypeVar("RangeT", int, float)
 ConfigT = TypeVar("ConfigT", bound=BaseModel)
@@ -63,6 +63,22 @@ class Range(BaseModel, Generic[RangeT]):
 
 SizeRange = Range[float]
 TimeRange = Range[DurationSec]
+
+
+class StrategyConfig(BaseModel):
+    """Base config for trading strategies."""
+
+    markets: list[str] = Field(..., min_length=1)
+    leverage: int = Field(10, gt=0, lt=50)
+    trade_size_usd: SizeRange
+    trade_duration: TimeRange
+    trade_cooldown: TimeRange
+    trade_heartbeat: DurationSec = DurationSec("15s")
+    pnl_limit: float = Field(0.25, gt=0, lt=1)
+    use_limit: bool = False
+    limit_wait: DurationSec = DurationSec("60s")
+    limit_market_fallback: bool = True
+    first_as_main: bool = False
 
 
 def load_config(config_cls: Type[ConfigT], filepath: str) -> ConfigT:

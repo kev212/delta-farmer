@@ -1,15 +1,19 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | Probably works in production
+# Copyright (c) vladkens | MIT License | If it compiles, ship it
 import asyncio
 import hashlib
 
 from curl_cffi.requests import AsyncSession, Response, errors
 from curl_cffi.requests.session import HttpMethod  # noqa: F401
 
+from .helpers import pickle_dump, pickle_load
 from .logger import logger
-from .utils import pickle_dump, pickle_load
 
-__all__ = ["AsyncHttp", "HttpMethod", "parse_proxy"]
+__all__ = ["ApiError", "AsyncHttp", "HttpMethod", "parse_proxy"]
+
+
+class ApiError(Exception):
+    pass
 
 
 def _cookies_hash(jar: dict) -> str:

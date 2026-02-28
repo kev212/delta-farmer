@@ -1,5 +1,5 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | May contain traces of genius
+# Copyright (c) vladkens | MIT License | Powered by caffeine and stackoverflow
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -7,14 +7,16 @@ from decimal import Decimal
 from functools import partial
 from typing import TypeVar
 
-from core.cli import create_cli
-from core.store import DataStore
-from core.table import AutoTable, Column
-from core.utils import parse_filter, short_addr, to_period_day, to_period_week
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from .client import Client, Trade
-from .config import Config
-from .manager import Manager
+from clients.pacifica import Client, Trade
+from strategy.models import StrategyConfig, load_config
+from strategy.strategy import DeltaStrategy
+from utils.cli import create_cli
+from utils.crypto import decrypt_value, is_encrypted
+from utils.helpers import parse_filter, short_addr, to_period_day, to_period_week
+from utils.store import DataStore
+from utils.table import AutoTable, Column
 
 # https://docs.pacifica.fi/points-program
 GENESIS = datetime(2025, 9, 4, tzinfo=timezone.utc)
@@ -23,8 +25,36 @@ T = TypeVar("T")
 DD = defaultdict[str, defaultdict[str, T]]
 
 
+class AccountConfig(BaseModel):
+    name: str
+    privkey: SecretStr = Field(repr=False)
+    proxy: str | None = None
+    enabled: bool = True
+
+    @field_validator("privkey", mode="before")
+    @classmethod
+    def decrypt_privkey(cls, v: str) -> str:
+        return decrypt_value(v) if isinstance(v, str) and is_encrypted(v) else v
+
+
+class Config(StrategyConfig):
+    accounts: list[AccountConfig]
+
+    @classmethod
+    def load(cls, filepath: str):
+        return load_config(cls, filepath)
+
+
+def client_from_config(cfg: AccountConfig) -> Client:
+    return Client(name=cfg.name, seckey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
+
+
 def load_accs(cfg: Config) -> list[Client]:
-    return [Client.from_config(acc) for acc in cfg.accounts]
+    return [client_from_config(acc) for acc in cfg.accounts]
+
+
+def load_trading_clients(cfg: Config) -> list[Client]:
+    return [client_from_config(x) for x in cfg.accounts if x.enabled]
 
 
 async def print_info(accs: list[Client]):
@@ -49,7 +79,7 @@ async def print_info(accs: list[Client]):
     tbl.print()
 
 
-async def sync_trades(acc: Client, ttl_sec: int = 3600) -> list[Trade]:
+async def sync_trades(acc: Client, ttl_sec=3600) -> list[Trade]:
     store_path = f".cache/pacifica_{short_addr(str(acc.keypair.pubkey()), 4, 4)}_trades.pkl"
     store = DataStore(store_path, id_key="history_id")
 
@@ -75,8 +105,9 @@ async def print_stats(accs: list[Client], period="week", filter_period="all", fo
             gtrades[period_key][acc.name].append(trade)
 
         points = await acc.points_history()
-        for week, point in points.items():
-            gpoints[week][acc.name] = point
+        for doc in points:
+            period_key = period_fn(int(doc.start_window.timestamp() * 1000))
+            gpoints[period_key][acc.name] = doc.total_points
 
     all_periods = sorted(gtrades.keys())
     periods_to_show = parse_filter(filter_period, all_periods)
@@ -110,6 +141,13 @@ async def print_stats(accs: list[Client], period="week", filter_period="all", fo
     tbl.print()
 
 
+async def close_all(cfg: Config):
+    clients = load_trading_clients(cfg)
+    for client in clients:
+        await client.cancel_all_orders()
+        await client.close_all_positions()
+
+
 async def main():
     cli = create_cli("pacifica", "configs/pacifica.toml", ["privkey"])
 
@@ -122,9 +160,11 @@ async def main():
         case "stats":
             await print_stats(accs, period=cli.group, filter_period=cli.filter, force=cli.sync)
         case "close":
-            await Manager(cfg).close()
+            await close_all(cfg)
         case "trade":
-            await Manager(cfg).run_trade()
+            trading_clients = load_trading_clients(cfg)
+            strategy = DeltaStrategy(cfg, trading_clients)
+            await strategy.run()
 
 
 if __name__ == "__main__":

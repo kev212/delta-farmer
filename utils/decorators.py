@@ -1,5 +1,5 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | Powered by caffeine and stackoverflow
+# Copyright (c) vladkens | MIT License | If it compiles, ship it
 import asyncio
 import inspect
 import time
@@ -25,7 +25,8 @@ def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0):
                     last_exception = e
                     if attempt < max_attempts:
                         logger.debug(
-                            f"{func.__name__} failed (attempt {attempt}/{max_attempts}), retrying in {wait:.1f}s..."
+                            f"{func.__name__} failed (attempt {attempt}/{max_attempts}),"
+                            f" retrying in {wait:.1f}s..."
                         )
                         await asyncio.sleep(wait)
                         wait *= backoff

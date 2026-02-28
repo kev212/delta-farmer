@@ -1,12 +1,12 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | CLI, not AI
+# Copyright (c) vladkens | MIT License | It's not a bug, it's undocumented behavior
 import argparse
 import glob
 import os
 import re
 import sys
 
-from core.crypto import config_cli_parser
+from .crypto import config_cli_parser
 
 
 def _get_version() -> str:

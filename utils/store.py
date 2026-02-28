@@ -1,10 +1,10 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | Don't blame me, blame the API docs
+# Copyright (c) vladkens | MIT License | Crafted with love and ctrl+c
 from datetime import UTC, datetime, timedelta
 from typing import Awaitable, Callable, Generic, TypeVar
 
-from core.logger import logger
-from core.utils import pickle_dump, pickle_load
+from .helpers import pickle_dump, pickle_load
+from .logger import logger
 
 T = TypeVar("T", bound=dict)
 FetchFn = Callable[[datetime | None], Awaitable[list[T]]]

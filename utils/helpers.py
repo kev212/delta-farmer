@@ -1,5 +1,5 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | Bugs are features in disguise
+# Copyright (c) vladkens | MIT License | Optimized for confusion
 import json
 import os
 import pickle
@@ -103,7 +103,7 @@ def parse_filter(filter_str: str, all_periods: list[str]) -> list[str]:
 # MARK: FS functions
 
 
-def pickle_load(filepath: str, *, lock: bool = False, delete_on_error: bool = False):
+def pickle_load(filepath: str, *, lock=False, delete_on_error=False):
     try:
         if lock:
             with FileLock(f"{filepath}.lock", timeout=5):
@@ -121,7 +121,7 @@ def pickle_load(filepath: str, *, lock: bool = False, delete_on_error: bool = Fa
         return None
 
 
-def pickle_dump(filepath: str, data: object, *, lock: bool = False):
+def pickle_dump(filepath: str, data: object, *, lock=False):
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         if lock:

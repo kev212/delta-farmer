@@ -1,5 +1,5 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
-# Copyright (c) vladkens | MIT License | This code is poetry (badly written)
+# Copyright (c) vladkens | MIT License | 99 bugs in the code, take one down...
 import argparse
 import base64
 import getpass
@@ -107,7 +107,8 @@ def encrypt_toml_config(filepath: str, fields: list[str]):
         # This prevents double encryption and ensures the password is correct.
         # It also skips password verify for files with encrypted values.
         # Next, encrypt any values that are not encrypted, using the same password if provided.
-        # The tool does not respect TOML structure and works with simple key-value pairs, even if they are commented.
+        # The tool does not respect TOML structure and works with simple key-value pairs,
+        # even if they are commented.
 
         def check_field(match):
             value = match.group(2)
