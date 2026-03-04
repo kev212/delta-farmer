@@ -8,6 +8,7 @@ import re
 import sys
 from collections.abc import Coroutine
 
+from . import telemetry
 from .crypto import config_cli_parser
 from .http import FatalError
 from .logger import logger
@@ -55,6 +56,9 @@ def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argparse.N
     handle_config = config_cli_parser(sub, fields=sec_fields)
 
     args = cli.parse_args()
+
+    telemetry.init(exchange=name, command=args.command or "", version=VERSION)
+    telemetry.track("command_run")
 
     if args.command is None:
         cli.print_help()

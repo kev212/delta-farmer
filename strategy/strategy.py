@@ -18,6 +18,7 @@ from strategy.trading import (
     usd_to_qty,
 )
 from utils import helpers as utils
+from utils import telemetry
 from utils.http import FatalError
 from utils.logger import logger
 
@@ -67,6 +68,10 @@ class DeltaStrategy:
                 wait_sec = self.cfg.trade_cooldown.sample()
                 logger.info(utils.wait_msg(wait_sec))
                 await utils.interruptible_sleep(wait_sec, self.stop_event)
+            except asyncio.CancelledError:
+                # CancelledError is BaseException (not Exception) since py3.8 — catch explicitly
+                await self.close_all()
+                raise
             except Exception as e:
                 logger.warning(f"Trade cycle failed {type(e)}: {e}")
                 await self.close_all()  # best-effort cleanup, may also fail
@@ -352,6 +357,17 @@ async def _balance_sorted(accs: Sequence[TradingClient]) -> list[TradingClient]:
 async def run_groups(cfg: StrategyConfig, accs: Sequence[TradingClient]) -> None:
     cfg, accs = _check_cfg(cfg, accs)
     await _warmup_all(accs)
+
+    telemetry.track(
+        "trade_started",
+        {
+            "account_count": len(accs),
+            "use_limit": cfg.use_limit,
+            "group_mode": cfg.group_size is not None,
+            "regroup_interval": cfg.regroup_interval is not None,
+            "first_as_main": cfg.first_as_main,
+        },
+    )
 
     if not cfg.group_size:  # Single group mode, no regrouping
         return await DeltaStrategy(cfg, accs).run()

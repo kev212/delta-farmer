@@ -13,6 +13,7 @@ dependencies = [
     "curl-cffi>=0.14.0",
     "filelock>=3.24.3",
     "loguru>=0.7.3",
+    "py-machineid>=1.0.0",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
     "rich>=14.3.2",

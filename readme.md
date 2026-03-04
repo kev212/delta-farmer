@@ -144,6 +144,13 @@ Delta-neutral trading maintains zero directional exposure by opening equal but o
 - [**Digital Ocean**](https://m.do.co/c/a97fd963258f) – VPC for running bots 24/7 in background
 - [**Proxy Shard**](https://proxyshard.com?ref=5406) – proxies for crypto activities
 
+## Telemetry
+
+Delta-farmer collects anonymous usage statistics (exchange name, command used,
+technical config flags) to understand adoption and popular features.
+No wallet addresses, balances, or strategy parameters are ever sent.
+Set `DF_TELEMETRY=0` to opt out completely.
+
 ## Risk Disclaimer
 
 **⚠️ USE AT YOUR OWN RISK**
