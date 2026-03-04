@@ -89,6 +89,10 @@ class EtherealPoint(BaseModel):
     started_at: datetime = Field(alias="startedAt")
     ended_at: int = Field(alias="endedAt")
 
+    @property
+    def total_points(self) -> Decimal:
+        return self.points + self.referral_points
+
 
 # MARK: Client
 
@@ -411,7 +415,7 @@ class EtherealClient:
         bal, pts, vol, snap = await asyncio.gather(
             self.balance(), self.points(), self._total_volume(), self._account_snapshot()
         )
-        total_pts = sum((ep.points for ep in pts), Decimal(0))
+        total_pts = sum((ep.total_points for ep in pts), Decimal(0))
         pnl = (
             Decimal(snap.get("realizedPnl", 0))  # realizedPnl is gross trading PnL
             + Decimal(snap.get("tradingFee", 0))  # tradingFee arrives with negative sign

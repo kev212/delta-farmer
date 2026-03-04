@@ -103,7 +103,7 @@ async def print_stats(accs: list[EtherealClient], period="week", filter_period="
             gpos[period_fn(t.created_at)][acc.name].append(t)
     for acc, pts in zip(accs, all_points):
         for p in pts:
-            gpts[period_fn(p.started_at)][acc.name] += p.points
+            gpts[period_fn(p.started_at)][acc.name] += p.total_points
 
     tbl = AutoTable(
         Column("Account", justify="left"),

@@ -8,17 +8,18 @@ import random
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 from filelock import FileLock
 
 from .logger import logger
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
-async def gather_accs(accs: list[T], fn) -> list:
-    return list(await asyncio.gather(*[fn(acc) for acc in accs]))
+async def gather_accs(accs: list[T], fn: Callable[[T], Awaitable[R]]) -> list[R]:
+    return list(await asyncio.gather(*(fn(acc) for acc in accs)))
 
 
 def first(items: list[T]) -> T | None:
