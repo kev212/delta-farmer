@@ -1,0 +1,9 @@
+[[accounts]]
+name = "acc1"
+privkey = "0xYOUR_PRIVATE_KEY_1"
+# proxy = "host:port:user:pass"
+
+# [[accounts]]
+# name = "acc2"
+# privkey = "0xYOUR_PRIVATE_KEY_2"
+# proxy = "host:port:user:pass"
