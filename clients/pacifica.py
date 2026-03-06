@@ -11,10 +11,10 @@ import base58
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from solders.keypair import Keypair
 
+from lib import utils
+from lib.decorators import bind_log_context, retry, ttl_cache
+from lib.http import ApiError, AsyncHttp, HttpMethod
 from strategy.trading import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
-from utils import helpers as utils
-from utils.decorators import bind_log_context, retry, ttl_cache
-from utils.http import ApiError, AsyncHttp, HttpMethod
 
 API_URL = "https://api.pacifica.fi/api/v1"
 APP_URL = "https://app.pacifica.fi"

@@ -8,11 +8,11 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
+from lib import utils
+from lib.decorators import bind_log_context, retry, ttl_cache
+from lib.http import ApiError, AsyncHttp, HttpMethod
+from lib.logger import logger
 from strategy.trading import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
-from utils import helpers as utils
-from utils.decorators import bind_log_context, retry, ttl_cache
-from utils.http import ApiError, AsyncHttp, HttpMethod
-from utils.logger import logger
 
 API_URL = "https://omni.variational.io/api"
 APP_URL = "https://omni.variational.io"

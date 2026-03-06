@@ -9,8 +9,8 @@ import sys
 import time
 from decimal import Decimal
 
+from lib.utils import round_to_tick_size
 from strategy.trading import TradingClient, usd_to_qty
-from utils.helpers import round_to_tick_size
 
 PASS = "✓"
 FAIL = "✗"

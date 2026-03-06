@@ -5,8 +5,8 @@ from typing import Awaitable, Callable, Generic, Type, TypeVar, cast
 
 from pydantic import BaseModel
 
-from .helpers import pickle_dump, pickle_load
 from .logger import logger
+from .utils import pickle_dump, pickle_load
 
 T = TypeVar("T")
 FetchFn = Callable[[datetime | None], Awaitable[list[T]]]

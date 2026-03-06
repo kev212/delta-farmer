@@ -8,7 +8,7 @@ from typing import Generic, Type, TypeVar
 from pydantic import BaseModel, Field, GetCoreSchemaHandler, ValidationError, model_validator
 from pydantic_core import core_schema
 
-from utils.helpers import parse_duration
+from lib.utils import parse_duration
 
 RangeT = TypeVar("RangeT", int, float)
 ConfigT = TypeVar("ConfigT", bound=BaseModel)

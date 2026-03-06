@@ -31,4 +31,4 @@ line-length = 100
 select = ["E", "F", "I"]
 
 [tool.pyright]
-include = ["apps", "clients", "strategy", "utils", "scripts"]
+include = ["apps", "clients", "strategy", "lib", "scripts"]

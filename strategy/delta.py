@@ -8,6 +8,9 @@ from decimal import Decimal
 from itertools import batched
 from typing import Sequence
 
+from lib import telemetry, utils
+from lib.http import FatalError
+from lib.logger import logger
 from strategy.models import StrategyConfig
 from strategy.trading import (
     Order,
@@ -17,10 +20,6 @@ from strategy.trading import (
     opposite_side,
     usd_to_qty,
 )
-from utils import helpers as utils
-from utils import telemetry
-from utils.http import FatalError
-from utils.logger import logger
 
 
 @dataclass

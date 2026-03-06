@@ -9,14 +9,14 @@ from functools import partial
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from clients.omni import OmniClient, OmniPoint
+from lib.cli import create_cli, run_app
+from lib.crypto import decrypt_value, is_encrypted
+from lib.store import DataStore
+from lib.table import AutoTable, Column
+from lib.utils import gather_accs, parse_filter, short_addr, to_period_day, to_period_week
+from strategy.delta import run_groups
 from strategy.models import StrategyConfig, load_config
-from strategy.strategy import run_groups
 from strategy.trading import close_all
-from utils.cli import create_cli, run_app
-from utils.crypto import decrypt_value, is_encrypted
-from utils.helpers import gather_accs, parse_filter, short_addr, to_period_day, to_period_week
-from utils.store import DataStore
-from utils.table import AutoTable, Column
 
 # https://docs.variational.io/omni/rewards/points
 # https://omni.variational.io/points (UI counts from -1 week)

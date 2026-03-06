@@ -6,8 +6,8 @@ import hashlib
 from curl_cffi.requests import AsyncSession, Response, errors
 from curl_cffi.requests.session import HttpMethod  # noqa: F401
 
-from .helpers import pickle_dump, pickle_load
 from .logger import logger
+from .utils import pickle_dump, pickle_load
 
 __all__ = ["ApiError", "FatalError", "AsyncHttp", "HttpMethod", "parse_proxy"]
 

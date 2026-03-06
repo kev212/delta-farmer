@@ -40,9 +40,9 @@ from eth_account.messages import encode_defunct
 from eth_account.signers.local import LocalAccount
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from utils.crypto import decrypt_value, is_encrypted
-from utils.decorators import retry
-from utils.http import parse_proxy
+from lib.crypto import decrypt_value, is_encrypted
+from lib.decorators import retry
+from lib.http import parse_proxy
 
 # MARK: Config
 

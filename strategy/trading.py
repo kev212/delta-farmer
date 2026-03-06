@@ -9,8 +9,8 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from utils.helpers import round_to_tick_size
-from utils.logger import logger
+from lib.logger import logger
+from lib.utils import round_to_tick_size
 
 Side = Literal["bid", "ask"]
 

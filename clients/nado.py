@@ -11,10 +11,10 @@ from eth_account import Account
 from eth_account.messages import encode_typed_data
 from pydantic import BaseModel
 
+from lib import utils
+from lib.decorators import bind_log_context, retry, ttl_cache
+from lib.http import ApiError, AsyncHttp
 from strategy.trading import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
-from utils import helpers as utils
-from utils.decorators import bind_log_context, retry, ttl_cache
-from utils.http import ApiError, AsyncHttp
 
 APP_URL = "https://app.nado.xyz"
 
