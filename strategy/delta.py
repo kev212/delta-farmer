@@ -11,6 +11,7 @@ from lib.http import FatalError
 from lib.logger import logger
 from strategy.execution import (
     TradeAction,
+    check_min_trade_sizes,
     close_all,
     close_positions,
     ensure_leverage,
@@ -108,21 +109,24 @@ class DeltaStrategy:
         rest_sizes = f"{sum(x.size_usd for x in actions[1:])} ({rest_sizes})"
         logger.info(f"Trade {market}: {size_usd} = {actions[0].size_usd} + {rest_sizes}")
 
-        # 3. Set leverage
+        # 3. Check min trade size per account
+        await check_min_trade_sizes(actions, market)
+
+        # 4. Set leverage
         await ensure_leverage(self.accounts, market, self.cfg.leverage)
 
-        # 4. Open positions
+        # 5. Open positions
         await open_positions(actions, market, self.cfg)
 
-        # 5. Wait with safety checks
+        # 6. Wait with safety checks
         success = await wait_with_checks(actions, market, self.cfg, self.stop_event)
 
-        # 6. Close positions
+        # 7. Close positions
         await close_positions(
             actions, market, self.accounts, self.cfg, use_limit=success and self.cfg.use_limit
         )
 
-        # 7. Report P/L
+        # 8. Report P/L
         await self.report_pnl(balances)
 
     # MARK: Helpers

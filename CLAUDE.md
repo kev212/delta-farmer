@@ -80,6 +80,8 @@ uv run ruff format .            # formatting
 uv run ruff check --fix .       # linting
 ```
 
+Use `make lint` and `make test` periodically while working — after a logical chunk of changes, before wrapping up a task, or whenever something feels uncertain. Not required after every single edit, but don't skip them at the end of a session.
+
 ## Rules
 
 - **No pathlib** — use `os.path` instead

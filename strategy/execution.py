@@ -62,6 +62,22 @@ async def _limit_order_and_wait(
     )
 
 
+async def check_min_trade_sizes(actions: list[TradeAction], market: str) -> None:
+    """Raise if any account's trade size is below the exchange minimum."""
+    min_usds = await asyncio.gather(*[act.client.get_min_trade_usd(market) for act in actions])
+    failed = [
+        (act.client.name, act.size_usd, min_usd)
+        for act, min_usd in zip(actions, min_usds)
+        if act.size_usd < min_usd
+    ]
+    if not failed:
+        return
+    for name, size, min_usd in failed:
+        logger.warning(f"{name}: {size:.2f} < min {min_usd:.2f} USD for {market}")
+    names = ", ".join(name for name, _, _ in failed)
+    raise RuntimeError(f"Trade size below minimum for: {names}")
+
+
 async def open_positions(actions: list[TradeAction], market: str, cfg: StrategyConfig) -> None:
     """Open positions. Main account uses limit if configured."""
     if cfg.use_limit:

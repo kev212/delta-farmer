@@ -155,6 +155,9 @@ class OmniClient:
     async def get_tick_size(self, symbol: str) -> Decimal:
         return Decimal("0.01")
 
+    async def get_min_trade_usd(self, symbol: str) -> Decimal:
+        return Decimal(10)  # TODO: derive from API
+
     # MARK: Leverage
 
     async def get_leverage(self, symbol: str) -> int:

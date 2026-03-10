@@ -201,6 +201,9 @@ class EtherealClient:
         sym = await self.symbol_info(symbol=symbol)
         return sym.tick_size
 
+    async def get_min_trade_usd(self, symbol: str) -> Decimal:
+        return Decimal(10)  # TODO: derive from API
+
     @ttl_cache(3600)
     async def get_symbols(self) -> list[str]:
         return [s.symbol for s in await self.symbols()]

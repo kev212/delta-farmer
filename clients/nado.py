@@ -239,6 +239,9 @@ class NadoClient:
         sym = await self.symbol_info(symbol=symbol)
         return sym.price_increment
 
+    async def get_min_trade_usd(self, symbol: str) -> Decimal:
+        return Decimal(100)  # Nado enforces $100 minimum notional; TODO: derive from API
+
     @ttl_cache(5)
     async def balance(self) -> Decimal:
         res = await self._query({"type": "subaccount_info", "subaccount": self.sender})

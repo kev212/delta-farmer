@@ -198,6 +198,9 @@ class PacificaClient:
         assert item is not None, f"Unknown symbol: {symbol}"
         return Decimal(item["tick_size"])
 
+    async def get_min_trade_usd(self, symbol: str) -> Decimal:
+        return Decimal(10)  # TODO: derive from API
+
     @ttl_cache(5)
     async def balance(self) -> Decimal:
         res = await self._call("GET", f"/account?account={self.keypair.pubkey()}")

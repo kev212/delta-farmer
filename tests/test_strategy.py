@@ -8,6 +8,7 @@ import pytest
 from strategy.delta import DeltaStrategy
 from strategy.execution import (
     TradeAction,
+    check_min_trade_sizes,
     check_positions,
     ensure_leverage,
     open_positions,
@@ -69,6 +70,7 @@ class MockClient:
         self._positions: list[Position] | None = None  # None = default (one BTC position)
         self.calls: list[str] = []
         self._leverage: int | None = None
+        self._min_trade_usd: Decimal = Decimal(10)
 
     @property
     def name(self) -> str:
@@ -99,6 +101,9 @@ class MockClient:
 
     async def get_tick_size(self, s):
         return Decimal("1")
+
+    async def get_min_trade_usd(self, s):
+        return self._min_trade_usd
 
     async def get_leverage(self, s):
         self._rec("get_leverage")
@@ -346,3 +351,29 @@ async def test_loop_closes_all_on_exception():
         await strategy._loop()
 
     assert "cancel_all_orders" in a.calls
+
+
+# MARK: check_min_trade_sizes
+
+
+async def test_min_sizes_all_ok():
+    """All accounts meet minimum → no exception."""
+    a, b = MockClient("a"), MockClient("b")
+    await check_min_trade_sizes([make_action(a, "bid"), make_action(b, "ask")], "BTC")
+
+
+async def test_min_sizes_one_fails():
+    """One account below minimum → raises naming that account."""
+    a, b = MockClient("a"), MockClient("b")
+    a._min_trade_usd = Decimal(200)  # action size_usd=100 < 200
+    with pytest.raises(RuntimeError, match="a"):
+        await check_min_trade_sizes([make_action(a, "bid"), make_action(b, "ask")], "BTC")
+
+
+async def test_min_sizes_multiple_fail():
+    """All accounts below minimum → raises listing all names."""
+    a, b = MockClient("a"), MockClient("b")
+    a._min_trade_usd = b._min_trade_usd = Decimal(200)
+    with pytest.raises(RuntimeError) as exc:
+        await check_min_trade_sizes([make_action(a, "bid"), make_action(b, "ask")], "BTC")
+    assert "a" in str(exc.value) and "b" in str(exc.value)

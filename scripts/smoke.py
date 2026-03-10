@@ -68,6 +68,19 @@ async def smoke(client: TradingClient, symbol: str, size_usd: float) -> tuple[in
         return passed, failed
 
     try:
+        min_usd = await client.get_min_trade_usd(symbol)
+        ok = size_usd >= float(min_usd)
+        note = f"min=${min_usd}"
+        if not ok:
+            note += f"  ⚠ requested ${size_usd} is below minimum"
+        report("min_trade_usd", ok, note)
+        if not ok:
+            print(f"  {SKIP} skipping order tests (size below minimum)")
+            return passed, failed
+    except Exception as e:
+        report("min_trade_usd", False, str(e))
+
+    try:
         pre = await client.positions()
         warn = "  ⚠ account not clean" if pre else ""
         report("positions baseline", True, f"{len(pre)} open{warn}")
