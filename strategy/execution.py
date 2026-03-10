@@ -87,17 +87,15 @@ async def open_positions(actions: list[TradeAction], market: str, cfg: StrategyC
             await close_all([act.client for act in actions])
             return
 
-        results = await asyncio.gather(
-            *[act.client.market_order(market, act.side, act.qty) for act in actions[1:]]
-        )
-        for act, order in zip(actions[1:], results):
-            act.order = order
-    else:
-        results = await asyncio.gather(
-            *[act.client.market_order(market, act.side, act.qty) for act in actions]
-        )
-        for act, order in zip(actions, results):
-            act.order = order
+        actions = actions[1:]
+
+    results = await asyncio.gather(
+        *[act.client.market_order(market, act.side, act.qty) for act in actions]
+    )
+    for act, order in zip(actions, results):
+        act.order = order
+        log = logger.bind(account=act.client.name)
+        log.debug(f"Market {act.side} {act.qty} {market} filled")
 
 
 async def close_positions(

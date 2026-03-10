@@ -3,10 +3,11 @@ __pycache__/
 .claude/
 .env
 .venv/
+*.har
 *.pyc
 /*.py
 /*.txt
 configs/
+scripts/debug_*.py
+tasks/
 uv.lock
-*.har
-TASK_*.md

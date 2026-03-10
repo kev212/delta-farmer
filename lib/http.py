@@ -9,11 +9,15 @@ from curl_cffi.requests.session import HttpMethod  # noqa: F401
 from .logger import logger
 from .utils import pickle_dump, pickle_load
 
-__all__ = ["ApiError", "FatalError", "AsyncHttp", "HttpMethod", "parse_proxy"]
+__all__ = ["ApiError", "NotFoundError", "FatalError", "AsyncHttp", "HttpMethod", "parse_proxy"]
 
 
 class ApiError(Exception):
     """Transient API or network error — safe to retry."""
+
+
+class NotFoundError(ApiError):
+    """Resource not found — expected empty result, not a failure."""
 
 
 class FatalError(Exception):

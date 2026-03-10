@@ -11,12 +11,22 @@ from eth_account import Account
 from eth_account.messages import encode_typed_data
 from pydantic import BaseModel
 
-from lib import utils
+from lib import logger, utils
 from lib.decorators import bind_log_context, retry, ttl_cache
-from lib.http import ApiError, AsyncHttp
+from lib.http import ApiError, AsyncHttp, NotFoundError
 from strategy.trading import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 APP_URL = "https://app.nado.xyz"
+
+# Error codes that map to NotFoundError instead of ApiError
+# https://docs.nado.xyz/developer-resources/api/errors
+_NOT_FOUND_CODES = frozenset(
+    {
+        2015,  # MarketNotFound
+        2020,  # OrderNotFound
+        2058,  # TriggerOrderNotFound
+    }
+)
 
 _EIP712_TYPES = {
     "EIP712Domain": [
@@ -52,7 +62,9 @@ def _to_x18(v: Decimal | int | float) -> int:
 
 
 def _from_x18(v: str | int) -> Decimal:
-    return Decimal(str(v)) / Decimal("1e18")
+    res = (Decimal(str(v)) / Decimal("1e18")).normalize()
+    _, _, exp = res.as_tuple()
+    return res.quantize(Decimal(1)) if isinstance(exp, int) and exp > 0 else res
 
 
 def _build_sender(address: str, subaccount="default") -> str:
@@ -125,13 +137,16 @@ class NadoClient:
         self.account = Account.from_key(privkey)
         self.address = str(self.account.address)
         self.sender = _build_sender(self.address, "default")
+        self._order_products: dict[str, int] = {}  # digest → product_id
 
     async def _query(self, pld: dict) -> dict:
         rep = await self.http.request("GET", "/v1/query", params=pld)
-        if not rep.ok or rep.json().get("status") != "success":
+        res = rep.json()
+        if not rep.ok or res.get("status") != "success":
+            if res.get("error_code") in _NOT_FOUND_CODES:
+                raise NotFoundError(res.get("error", "Not found"))
             raise ApiError(f"Query error {rep.status_code}: {rep.text}")
-
-        return rep.json().get("data", {})
+        return res.get("data", {})
 
     async def _execute(self, pld: dict) -> dict:
         rep = await self.http.request("POST", "/v1/execute", json=pld)
@@ -302,6 +317,7 @@ class NadoClient:
 
         res = await self._execute(pld)
         assert "digest" in res, f"Unexpected place_order response: {res}"
+        self._order_products[res["digest"]] = sym.product_id
 
         return Order(
             id=res["digest"],
@@ -330,7 +346,35 @@ class NadoClient:
             symbol, side, qty, price, order_type=0, reduce_only=reduce_only
         )
 
-    async def get_order(self, order_id: str) -> Order | None:
+    async def _get_order_live(self, order_id: str) -> Order | None:
+        """Query live gateway for an open order. Returns Order(OPEN) if found, None otherwise."""
+        product_id = self._order_products.get(order_id)
+        if product_id is None:
+            logger.warning(f"Product ID not found for order {order_id}, skipping live query")
+            return None
+
+        try:
+            res = await self._query({"type": "order", "product_id": product_id, "digest": order_id})
+        except NotFoundError:
+            return None
+
+        sym = await self.symbol_info(product_id=product_id)
+        amount = _from_x18(res["amount"])
+        size = abs(amount)
+        unfilled = abs(_from_x18(res["unfilled_amount"]))
+        return Order(
+            id=order_id,
+            symbol=sym.symbol,
+            side="bid" if amount > 0 else "ask",
+            size=size,
+            filled=size - unfilled,
+            price=_from_x18(res["price_x18"]),
+            status=OrderStatus.OPEN,
+            reduce_only=False,
+        )
+
+    async def _get_order_arch(self, order_id: str) -> Order | None:
+        """Query archive for a terminal order. Returns Order(FILLED/CANCELED) or None."""
         res = await self._archive({"orders": {"digests": [order_id]}})
         res = utils.first([x for x in res.get("orders", []) if x["digest"] == order_id])
         if res is None:
@@ -349,8 +393,15 @@ class NadoClient:
             filled=filled,
             price=_from_x18(res["price_x18"]),
             status=OrderStatus.FILLED if filled >= size else OrderStatus.CANCELED,
-            reduce_only=False,  # todo: no way to know this?
+            reduce_only=False,
         )
+
+    async def get_order(self, order_id: str) -> Order | None:
+        live, arch = await asyncio.gather(
+            self._get_order_live(order_id),
+            self._get_order_arch(order_id),
+        )
+        return arch or live  # archive is terminal state, takes priority
 
     async def cancel_order(self, order: Order) -> bool:
         sym = await self.symbol_info(symbol=order.symbol)
@@ -386,6 +437,8 @@ class NadoClient:
             if amount == 0:
                 continue
 
+            sym = await self.symbol_info(product_id=b["product_id"])
+            amount = _from_x18(b["balance"]["amount"])
             vquote = _from_x18(b["balance"].get("v_quote_balance", "0"))
             entry_price = abs(vquote / amount) if amount != 0 else Decimal(0)
 
@@ -394,8 +447,6 @@ class NadoClient:
                 if p.get("product_id") == b["product_id"]:
                     oracle_price = _from_x18(p.get("oracle_price_x18", "0"))
                     break
-
-            sym = await self.symbol_info(product_id=b["product_id"])
             pos = Position(
                 id=str(b["product_id"]),
                 symbol=sym.symbol,
@@ -438,9 +489,9 @@ class NadoClient:
             has_more = len(res) >= limit
 
             for o in res:
-                amount = _from_x18(o["amount"])
                 created_ms = (int(o["nonce"]) >> 20) - 100_000
                 s = await self.symbol_info(product_id=o["product_id"])
+                amount = _from_x18(o["amount"])
                 t = NadoTrade(
                     digest=o["digest"],
                     product_id=o["product_id"],

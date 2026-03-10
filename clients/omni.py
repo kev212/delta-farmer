@@ -42,6 +42,7 @@ class OmniOrder(BaseModel):
     status: str
     is_reduce_only: bool
     limit_price: Decimal | None
+    price: Decimal | None = None  # execution price (present when cleared)
 
 
 class OmniPosition(BaseModel):
@@ -110,7 +111,6 @@ class OmniClient:
     async def _call(self, method: HttpMethod, path: str, **kwargs):
         await self._ensure_auth()
         rep = await self.http.request(method, path, **kwargs)
-        logger.trace(f">> {method} {path} response: {rep.status_code}")
         if not rep.ok:
             raise ApiError(f"API error: {rep.status_code} {rep.text[:200]}")
         return rep.json()
@@ -173,12 +173,32 @@ class OmniClient:
     # MARK: Orders
 
     async def get_order(self, order_id: str) -> Order | None:
-        return None  # Omni doesn't have order lookup
+        pld = {"order_by": "created_at", "order": "desc", "limit": 20, "offset": 0}
+        res = await self._call("GET", "/orders/v2", params=pld)
+        item = next((x for x in res.get("result", []) if x.get("rfq_id") == order_id), None)
+        if item is None:
+            return None
+        o = OmniOrder(**item)
+        status_map = {
+            "filled": OrderStatus.FILLED,
+            "cleared": OrderStatus.FILLED,
+            "pending": OrderStatus.OPEN,
+        }
+        status = status_map.get(o.status, OrderStatus.CANCELED)
+        return Order(
+            id=o.id,
+            symbol=o.market,
+            side="bid" if o.side == "buy" else "ask",
+            size=o.qty,
+            filled=o.qty if status == OrderStatus.FILLED else Decimal(0),
+            price=o.price or o.limit_price,
+            status=status,
+            reduce_only=o.is_reduce_only,
+        )
 
     async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
         signed_qty = qty if side == "bid" else -qty
         quote = await self._quote(symbol, abs(signed_qty))
-        logger.debug(f"Market {'buy' if side == 'bid' else 'sell'} order: {qty} {symbol}")
         pld = {
             "quote_id": quote.quote_id,
             "side": "buy" if side == "bid" else "sell",

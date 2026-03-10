@@ -15,7 +15,12 @@ from strategy.execution import (
     wait_with_checks,
 )
 from strategy.models import StrategyConfig
-from strategy.trading import Order, OrderStatus, Position, Side
+from strategy.trading import Order, OrderStatus, Position, Side, limit_order_and_wait
+
+
+async def _instant_sleep(_):
+    """Replace asyncio.sleep with a no-op for fast tests."""
+
 
 # MARK: Helpers
 
@@ -351,6 +356,87 @@ async def test_loop_closes_all_on_exception():
         await strategy._loop()
 
     assert "cancel_all_orders" in a.calls
+
+
+# MARK: limit_order_and_wait
+
+
+async def test_limit_filled_immediately_no_polling():
+    """limit_order() returns FILLED order, get_order never called (market-fallback case)."""
+    a = MockClient("a")
+    # MockClient.limit_order returns FILLED by default
+    result = await limit_order_and_wait(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"))
+    assert result is not None
+    assert result.status == OrderStatus.FILLED
+    assert "get_order" not in a.calls
+
+
+async def test_limit_open_get_order_none_raises_fatal(monkeypatch):
+    """limit_order() returns OPEN, get_order always None → FatalError (unknown order state)."""
+    from lib.http import FatalError
+
+    a = MockClient("a")
+    monkeypatch.setattr("strategy.trading.asyncio.sleep", _instant_sleep)
+
+    async def open_limit(s, side, qty, price, reduce_only=False):
+        return Order(
+            id="ord-l",
+            symbol=s,
+            side=side,
+            size=qty,
+            filled=Decimal(0),
+            price=price,
+            status=OrderStatus.OPEN,
+        )
+
+    a.limit_order = open_limit  # type: ignore[method-assign]
+    # get_order returns None by default in MockClient
+
+    with pytest.raises(FatalError, match="never appeared"):
+        await limit_order_and_wait(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=0)
+
+
+async def test_limit_open_polls_until_filled(monkeypatch):
+    """limit_order() returns OPEN, get_order returns FILLED on 3rd call → normal fill path."""
+    a = MockClient("a")
+    monkeypatch.setattr("strategy.trading.asyncio.sleep", _instant_sleep)
+    call_count = 0
+
+    async def open_limit(s, side, qty, price, reduce_only=False):
+        return Order(
+            id="ord-l",
+            symbol=s,
+            side=side,
+            size=qty,
+            filled=Decimal(0),
+            price=price,
+            status=OrderStatus.OPEN,
+        )
+
+    async def eventually_filled(oid):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            return Order(
+                id=oid,
+                symbol="BTC",
+                side="bid",
+                size=Decimal("0.002"),
+                filled=Decimal(0),
+                price=Decimal("50000"),
+                status=OrderStatus.OPEN,
+            )
+        return make_order(oid, "BTC", "bid", Decimal("0.002"))
+
+    a.limit_order = open_limit  # type: ignore[method-assign]
+    a.get_order = eventually_filled  # type: ignore[method-assign]
+
+    result = await limit_order_and_wait(
+        a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=60
+    )
+    assert result is not None
+    assert result.status == OrderStatus.FILLED
+    assert call_count >= 3
 
 
 # MARK: check_min_trade_sizes

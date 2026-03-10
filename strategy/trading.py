@@ -9,6 +9,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from lib.http import FatalError
 from lib.logger import logger
 from lib.utils import round_to_tick_size
 
@@ -156,23 +157,39 @@ async def limit_order_and_wait(
         raw_price = bid if side == "bid" else ask
         price = round_to_tick_size(raw_price, tick_size)
 
-    logger.debug(f"Limit {side} {qty} {symbol} @ {price} ({client.name})")
+    log = logger.bind(account=client.name)
+    log.debug(f"Limit {side} {qty} {symbol} @ {price}")
     order = await client.limit_order(symbol, side, qty, price, reduce_only)
+    if order.status == OrderStatus.FILLED:
+        return order  # already filled (e.g. exchange falls back to market internally)
+
     order_id = order.id
     started_at, filled_since = time.time(), None
+    poll_delay = 0.25  # starts at 250ms, grows to ~3s
+    last_log_at = started_at
 
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(poll_delay)
+        poll_delay = min(poll_delay * 2.5, 3.0)
+
         order = await client.get_order(order_id)
         if order is None:
-            continue  # still open or archive lag — keep polling
+            if (time.time() - started_at) > timeout:
+                raise FatalError(f"Limit order {order_id} never appeared — unknown state, aborting")
+            continue  # archive lag — keep polling
+
+        elapsed = time.time() - started_at
+        if time.time() - last_log_at >= 30:
+            fill_pct = f" ({order.filled / order.size:.0%})" if order.filled > 0 else ""
+            log.debug(f"Limit {side} {qty} {symbol}: waiting{fill_pct} elapsed={elapsed:.0f}s")
+            last_log_at = time.time()
 
         if order.status == OrderStatus.FILLED:
-            logger.debug(f"Limit order filled in {time.time() - started_at:.1f}s")
+            log.debug(f"Limit {side} {qty} {symbol} filled in {time.time() - started_at:.1f}s")
             return order
 
         if order.status == OrderStatus.CANCELED:
-            logger.debug(f"Limit order canceled after {time.time() - started_at:.1f}s")
+            log.debug(f"Limit order canceled after {time.time() - started_at:.1f}s")
             return None
 
         if order.filled > 0 and filled_since is None:
@@ -180,10 +197,10 @@ async def limit_order_and_wait(
 
         check_time = filled_since or started_at
         if (time.time() - check_time) > timeout:
-            logger.debug(f"Limit order timeout after {timeout}s")
+            log.debug(f"Limit order timeout after {timeout}s")
             await client.cancel_order(order)
             remaining = order.size - order.filled
             if use_market_fallback and remaining > 0:
-                logger.debug(f"Market fallback for {remaining}")
+                log.debug(f"Limit timeout → market fallback {side} {remaining} {symbol}")
                 return await client.market_order(symbol, side, remaining, reduce_only)
             return None
