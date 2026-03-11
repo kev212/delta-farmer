@@ -2,14 +2,15 @@
 
 <p align="center"><img src=".github/logo.svg" width="200" /></p>
 
-Automated delta-neutral trading for crypto points farming. Execute hedged strategies across perpetual DEXs to maximize airdrops with minimal directional risk.
+Automated delta-neutral trading for crypto points farming. Run classic two-sided hedges or balanced multi-symbol baskets across perpetual DEXs to maximize volume and points with limited directional risk.
 
 ## Features
 
 - 🎯 Delta-neutral trading strategies
+- 🧩 Multi-symbol balanced trading mode
 - 🔄 Multi-account position management
 - 👥 Optional grouped trading mode
-- 📊 Real-time P&L tracking
+- 📊 Real-time ROI safety checks
 - 🔐 Encrypted private key storage
 - 🎲 Configurable trade sizes and timing
 
@@ -106,6 +107,30 @@ Rules:
 - when `group_size` is set, `first_as_main` is ignored
 - `regroup_interval` is applied only when `group_size` is set
 
+### Multi-Symbol Trading Mode
+
+The new basket mode lets one cycle trade multiple symbols at once while staying neutral in two ways:
+
+- each symbol is opened with equal long and short notional across the selected accounts
+- each participating account finishes the basket with matched long and short exposure across all traded symbols
+
+Example:
+
+```toml
+symbols = ["BTC", "ETH"]
+symbols_per_trade = 2
+trade_size_usd = { min = 140, max = 160 }
+position_roi_limit = 0.8   # close if any single position reaches +/-80% ROI
+combined_roi_limit = 0.1   # close if the full basket reaches +/-10% ROI
+```
+
+Behavior:
+
+- `symbols_per_trade = 1` keeps the classic single-symbol mode
+- `symbols_per_trade = 2..4` enables balanced basket mode
+- when `symbols_per_trade > 1`, set exactly that many entries in `symbols`
+- safety exits now use both per-position ROI and combined basket ROI
+
 ### Password Management
 
 ```bash
@@ -132,14 +157,11 @@ uv run -m apps.<app> trade
 
 ## How It Works
 
-Delta-neutral trading maintains zero directional exposure by opening equal but opposite positions:
+Delta-neutral trading maintains limited directional exposure by opening matched long/short positions.
 
-1. Opens a LONG position on one account
-2. Opens a SHORT position on another account
-3. Positions offset each other, neutralizing price risk
-4. Earns trading volume for points/airdrops
-5. Closes positions after random duration
-6. Repeats with configurable cooldown
+In classic mode, one cycle opens one symbol with opposite sides across different accounts.
+
+In basket mode, one cycle can split the trade across multiple symbols. The planner distributes notional so each symbol stays neutral and each account also nets out across the full basket.
 
 ## Recommended Services
 

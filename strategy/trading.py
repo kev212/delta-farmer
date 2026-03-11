@@ -140,7 +140,7 @@ def opposite_side(side: Side) -> Side:
     return "ask" if side == "bid" else "bid"
 
 
-async def limit_order_and_wait(
+async def fill_limit_order(
     client: TradingClient,
     symbol: str,
     side: Side,

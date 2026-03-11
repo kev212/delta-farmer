@@ -3,9 +3,16 @@
 import random
 import sys
 import tomllib
+import warnings
 from typing import Generic, Type, TypeVar
 
-from pydantic import BaseModel, Field, GetCoreSchemaHandler, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    GetCoreSchemaHandler,
+    ValidationError,
+    model_validator,
+)
 from pydantic_core import core_schema
 
 from lib.utils import parse_duration
@@ -68,19 +75,32 @@ TimeRange = Range[DurationSec]
 class StrategyConfig(BaseModel):
     """Base config for trading strategies."""
 
-    markets: list[str] = Field(..., min_length=1)
+    symbols: list[str] = Field(..., min_length=1)
+    symbols_per_trade: int = Field(1, gt=0, le=4)
     leverage: int = Field(10, gt=0, lt=50)
     trade_size_usd: SizeRange
     trade_duration: TimeRange
     trade_cooldown: TimeRange
     trade_heartbeat: DurationSec = DurationSec("15s")
-    pnl_limit: float = Field(0.25, gt=0, lt=1)
+    position_roi_limit: float = Field(0.8, gt=0, lt=1)
+    combined_roi_limit: float = Field(0.1, gt=0, lt=1)
     use_limit: bool = False
     limit_wait: DurationSec = DurationSec("90s")
     limit_market_fallback: bool = True
     first_as_main: bool = False
     group_size: int | None = Field(None, ge=2, le=5)
     regroup_interval: DurationSec | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _before(cls, values):
+        if isinstance(values, dict):
+            if "symbols" in values and "markets" in values:
+                raise ValueError("Use `symbols` only; replace legacy `markets` with `symbols`")
+            if "markets" in values:
+                warnings.warn("`markets` is deprecated, use `symbols` instead")
+                values["symbols"] = values.pop("markets")
+        return values
 
 
 def load_config(config_cls: Type[ConfigT], filepath: str) -> ConfigT:

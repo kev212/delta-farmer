@@ -9,7 +9,14 @@ from typing import Sequence
 from lib import utils
 from lib.logger import logger
 from strategy.models import StrategyConfig
-from strategy.trading import Order, Side, TradingClient, limit_order_and_wait, opposite_side
+from strategy.trading import (
+    Order,
+    Position,
+    Side,
+    TradingClient,
+    fill_limit_order,
+    opposite_side,
+)
 
 
 @dataclass
@@ -26,24 +33,38 @@ class TradeAction:
 # MARK: Execution primitives
 
 
-async def ensure_leverage(accounts: Sequence[TradingClient], market: str, leverage: int) -> None:
+async def ensure_leverage(accounts: Sequence[TradingClient], symbol: str, leverage: int) -> None:
     async def _ensure(acc: TradingClient) -> None:
-        current = await acc.get_leverage(market)
+        current = await acc.get_leverage(symbol)
         if current is None or current != leverage:
-            await acc.set_leverage(market, leverage)
+            await acc.set_leverage(symbol, leverage)
 
     await asyncio.gather(*[_ensure(acc) for acc in accounts])
 
 
-async def close_all(accounts: Sequence[TradingClient]) -> None:
-    rs1 = await asyncio.gather(*[acc.cancel_all_orders() for acc in accounts])
-    rs2 = await asyncio.gather(*[acc.close_all_positions() for acc in accounts])
+async def close_all(accs: Sequence[TradingClient], _attempts: int = 3) -> None:
+    """Best-effort cleanup — retries on failure, never raises. cancel/close are idempotent."""
+    n_failed = 0
+    for attempt in range(_attempts):
+        rs1 = await asyncio.gather(*[a.cancel_all_orders() for a in accs], return_exceptions=True)
+        rs2 = await asyncio.gather(*[a.close_all_positions() for a in accs], return_exceptions=True)
 
-    if sum(rs1) + sum(rs2) > 0:
-        logger.info(f"Closed {sum(rs1)} orders and {sum(rs2)} positions")
+        n_orders = sum(r for r in rs1 if isinstance(r, int))
+        n_positions = sum(r for r in rs2 if isinstance(r, int))
+        n_failed = sum(1 for r in [*rs1, *rs2] if isinstance(r, Exception))
+        if n_orders + n_positions > 0:
+            logger.info(f"Closed {n_orders} orders and {n_positions} positions")
+        if not n_failed:
+            return
+
+        if attempt < _attempts - 1:
+            logger.warning(f"close_all: {n_failed} failed, retrying ({attempt + 1}/{_attempts})...")
+            await asyncio.sleep(2.0 * 2**attempt)
+
+    logger.warning(f"close_all: still {n_failed} account(s) failed after {_attempts} attempts")
 
 
-async def _limit_order_and_wait(
+async def _fill_limit_order(
     client: TradingClient,
     symbol: str,
     side: Side,
@@ -51,7 +72,7 @@ async def _limit_order_and_wait(
     cfg: StrategyConfig,
     reduce_only: bool = False,
 ) -> Order | None:
-    return await limit_order_and_wait(
+    return await fill_limit_order(
         client,
         symbol,
         side,
@@ -62,9 +83,9 @@ async def _limit_order_and_wait(
     )
 
 
-async def check_min_trade_sizes(actions: list[TradeAction], market: str) -> None:
+async def check_min_trade_sizes(actions: list[TradeAction], symbol: str) -> None:
     """Raise if any account's trade size is below the exchange minimum."""
-    min_usds = await asyncio.gather(*[act.client.get_min_trade_usd(market) for act in actions])
+    min_usds = await asyncio.gather(*[act.client.get_min_trade_usd(symbol) for act in actions])
     failed = [
         (act.client.name, act.size_usd, min_usd)
         for act, min_usd in zip(actions, min_usds)
@@ -73,89 +94,122 @@ async def check_min_trade_sizes(actions: list[TradeAction], market: str) -> None
     if not failed:
         return
     for name, size, min_usd in failed:
-        logger.warning(f"{name}: {size:.2f} < min {min_usd:.2f} USD for {market}")
+        logger.warning(f"{name}: {size:.2f} < min {min_usd:.2f} USD for {symbol}")
     names = ", ".join(name for name, _, _ in failed)
     raise RuntimeError(f"Trade size below minimum for: {names}")
 
 
-async def open_positions(actions: list[TradeAction], market: str, cfg: StrategyConfig) -> None:
+async def open_positions(acts: list[TradeAction], symbol: str, cfg: StrategyConfig) -> None:
     """Open positions. Main account uses limit if configured."""
+    all_acts = acts
     if cfg.use_limit:
-        main = actions[0]
-        main.order = await _limit_order_and_wait(main.client, market, main.side, main.qty, cfg)
+        main, acts = acts[0], acts[1:]
+        main.order = await _fill_limit_order(main.client, symbol, main.side, main.qty, cfg)
         if main.order is None:
-            await close_all([act.client for act in actions])
+            await close_all([act.client for act in all_acts])
             return
 
-        actions = actions[1:]
-
-    results = await asyncio.gather(
-        *[act.client.market_order(market, act.side, act.qty) for act in actions]
-    )
-    for act, order in zip(actions, results):
+    rs = await asyncio.gather(*[act.client.market_order(symbol, act.side, act.qty) for act in acts])
+    for act, order in zip(acts, rs):
         act.order = order
         log = logger.bind(account=act.client.name)
-        log.debug(f"Market {act.side} {act.qty} {market} filled")
+        log.debug(f"Market {act.side} {act.qty} {symbol} filled")
 
 
-async def close_positions(
-    actions: list[TradeAction],
-    market: str,
-    accounts: Sequence[TradingClient],
-    cfg: StrategyConfig,
-    use_limit: bool = False,
+async def close_symbol_positions(
+    accs: list[TradingClient], symbol: str, cfg: StrategyConfig, use_limit=False
 ) -> None:
-    """Close this cycle's positions on the given market only."""
+    """Close this cycle's positions on the given symbol only."""
+    assert len(set(acc.name for acc in accs)) == len(accs), "Duplicate accounts in close_positions"
+
     if use_limit:
-        main = actions[0]
-        positions = await main.client.positions()
-        for pos in [p for p in positions if p.symbol == market]:
-            await _limit_order_and_wait(
-                main.client, pos.symbol, opposite_side(pos.side), pos.size, cfg, reduce_only=True
-            )
+        main, accs = accs[0], accs[1:]
+        positions = await main.positions()
+        positions = [p for p in positions if p.symbol == symbol]
+        for pos in positions:
+            side = opposite_side(pos.side)
+            await _fill_limit_order(main, pos.symbol, side, pos.size, cfg, reduce_only=True)
 
-    await close_all(accounts)
+    for acc in accs:
+        positions = await acc.positions()
+        positions = [p for p in positions if p.symbol == symbol]
+        for pos in positions:
+            await acc.close_position(pos)
+            log = logger.bind(account=acc.name)
+            log.debug(f"Closed {pos.size} {symbol} with market order")
 
 
-async def check_positions(actions: list[TradeAction], market: str, pnl_limit: float) -> bool:
-    """Check if positions are within risk limits."""
-    for act in actions:
-        positions = await act.client.positions()
-        market_pos = [p for p in positions if p.symbol == market]
+async def _position_state(client: TradingClient, symbol: str) -> Position | None:
+    positions = await client.positions()
+    symbol_positions = [p for p in positions if p.symbol == symbol]
 
-        if len(market_pos) != 1:
-            logger.warning(f"{len(market_pos)} positions for {market} on {act.client.name}")
+    if len(symbol_positions) != 1:
+        logger.warning(f"{len(symbol_positions)} positions for {symbol} on {client.name}")
+        return None
+
+    return symbol_positions[0]
+
+
+async def _position_roi(
+    client: TradingClient, symbol: str
+) -> tuple[Decimal, Decimal, Decimal] | None:
+    pos = await _position_state(client, symbol)
+    if pos is None:
+        return None
+    if pos.size == 0:
+        return Decimal(0), Decimal(0), Decimal(0)
+
+    price = await client.get_price(symbol)
+    entry_cost = pos.size * pos.entry_price
+    current_cost = pos.size * price
+    sign = Decimal(1) if pos.side == "bid" else Decimal(-1)
+    pnl = (current_cost - entry_cost) * sign
+    roi = pnl / entry_cost
+    return roi, pnl, entry_cost
+
+
+async def positions_within_limits(
+    symbol_actions: dict[str, list[TradeAction]],
+    position_roi_limit: Decimal,
+    combined_roi_limit: Decimal,
+) -> bool:
+    total_pnl = Decimal(0)
+    total_entry_cost = Decimal(0)
+    checks = [(symbol, act) for symbol, actions in symbol_actions.items() for act in actions]
+    states = await asyncio.gather(*[_position_roi(act.client, symbol) for symbol, act in checks])
+
+    for (symbol, act), state in zip(checks, states):
+        if state is None:
             return False
 
-        pos = market_pos[0]
-        if pos.size == 0:
-            continue
-
-        price = await act.client.get_price(market)
-        entry_cost = pos.size * pos.entry_price
-        current_cost = pos.size * price
-        roi = (current_cost / entry_cost - 1) * (1 if pos.side == "bid" else -1)
-
-        if abs(roi) >= pnl_limit:
-            tmp = f"{roi:.2%} ({entry_cost:.2f} -> {current_cost:.2f})"
-            logger.info(f"Position {market} hit stop loss at {tmp}, closing...")
+        roi, pnl, entry_cost = state
+        if abs(roi) >= position_roi_limit:
+            logger.info(f"Position {symbol} on {act.client.name} hit {roi:.2%}, closing...")
             return False
+
+        total_pnl += pnl
+        total_entry_cost += entry_cost
+
+    if total_entry_cost == 0:
+        return True
+
+    combined_roi = total_pnl / total_entry_cost
+    if abs(combined_roi) >= combined_roi_limit:
+        logger.info(f"Combined ROI hit {combined_roi:.2%}, closing...")
+        return False
 
     return True
 
 
-async def wait_with_checks(
-    actions: list[TradeAction],
-    market: str,
+async def hold_positions(
+    symbol_actions: dict[str, list[TradeAction]],
     cfg: StrategyConfig,
     stop_event: asyncio.Event | None = None,
 ) -> bool:
-    """Wait for trade duration, periodically checking positions."""
     duration = cfg.trade_duration.sample()
     logger.info(utils.wait_msg(duration))
 
     until = time.time() + duration
-
     while time.time() < until:
         if stop_event and stop_event.is_set():
             logger.info("Stop event received, exiting early")
@@ -165,7 +219,11 @@ async def wait_with_checks(
         await asyncio.sleep(max(0, sleep_for))
 
         try:
-            if not await check_positions(actions, market, cfg.pnl_limit):
+            if not await positions_within_limits(
+                symbol_actions,
+                Decimal(str(cfg.position_roi_limit)),
+                Decimal(str(cfg.combined_roi_limit)),
+            ):
                 return False
         except Exception as e:
             logger.warning(f"Position safety check failed {type(e)}: {e}, continuing wait...")

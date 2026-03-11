@@ -7,19 +7,21 @@ from itertools import batched
 from typing import Sequence
 
 from lib import telemetry, utils
+from lib.decorators import retry
 from lib.http import FatalError
 from lib.logger import logger
 from strategy.execution import (
     TradeAction,
     check_min_trade_sizes,
     close_all,
-    close_positions,
+    close_symbol_positions,
     ensure_leverage,
+    hold_positions,
     open_positions,
-    wait_with_checks,
 )
 from strategy.models import StrategyConfig
-from strategy.trading import Side, TradingClient, opposite_side, usd_to_qty
+from strategy.planner import plan_symbol_actions
+from strategy.trading import TradingClient, usd_to_qty
 
 
 class DeltaStrategy:
@@ -41,122 +43,106 @@ class DeltaStrategy:
 
     # MARK: Core trading flow
 
-    async def _loop(self):
-        await close_all(self.accounts)  # clean up leftovers from a previous run
+    MAX_FAILURES = 5
 
-        # cycles until an exception; run() catches, waits, and retries
-        while True:
-            try:
-                # print sep for each trade cycle in single-group mode
-                print("-" * 60) if not self.cfg.group_size else None
-
-                await self.trade_cycle()
-                utils.raise_if_cancelled(self.stop_event)
-
-                wait_sec = self.cfg.trade_cooldown.sample()
-                logger.info(utils.wait_msg(wait_sec))
-                await utils.interruptible_sleep(wait_sec, self.stop_event)
-            except asyncio.CancelledError:
-                # CancelledError is BaseException (not Exception) since py3.8 — catch explicitly
-                await close_all(self.accounts)
-                raise
-            except Exception as e:
-                logger.warning(f"Trade cycle failed {type(e)}: {e}")
-                await close_all(self.accounts)  # best-effort cleanup, may also fail
-                raise e
+    async def _wait(self, wait_sec: float):
+        logger.info(utils.wait_msg(wait_sec))
+        await utils.interruptible_sleep(wait_sec, self.stop_event)
 
     async def run(self):
-        balance_inited = False
+        bals = await self.get_balances()
+        self.initial_bal = sum(bal for _, bal in bals)
+        await close_all(self.accounts)  # clean up leftovers from a previous run
 
-        while True:  # restart _loop() after transient failures; exit only on cancel/fatal
+        failures = 0
+        while True:
             try:
-                if not balance_inited:
-                    bals = await self.get_balances()
-                    self.initial_bal = sum(bal for _, bal in bals)
-                    balance_inited = True
-
-                await self._loop()
-            except asyncio.CancelledError:
-                return  # graceful shutdown
+                print("-" * 60) if not self.cfg.group_size else None
+                await self.trade_cycle()
+                failures = 0
+                await self._wait(self.cfg.trade_cooldown.sample())
+            except asyncio.CancelledError:  # stop_event triggered, time to exit
+                await close_all(self.accounts)
+                return
             except Exception as e:
-                wait_sec = 60 * 3
-                logger.error(f"Trade failed with {type(e)}: {e} - {utils.wait_msg(wait_sec)}")
-                await asyncio.sleep(wait_sec)
+                await close_all(self.accounts)
+
+                failures += 1
+                if failures >= self.MAX_FAILURES:
+                    logger.error("Too many consecutive failures, stopping strategy")
+                    raise
+
+                msg = f"Cycle failed ({failures}/{self.MAX_FAILURES}) {type(e).__name__}: {e}"
+                logger.warning(msg)
+                await self._wait(60 * 3)  # wait a bit before retrying after a failure
 
     async def trade_cycle(self):
-        """One complete trade cycle."""
-        # 1. Get balances, find safe pairs
+        """Run one full trade cycle across the selected symbols."""
+        # 1. Get balances
         balances = await self.get_balances()
         bal_str = " | ".join([f"{name} {bal:.2f}" for name, bal in balances])
         bal_str = f"{sum(bal for _, bal in balances):.2f} = " + bal_str
         logger.info(f"Balances: {bal_str}")
 
-        actions = self.plan_trades(balances)
-        if actions is None:
+        # 2. Pick symbols and build full plan
+        total_usd = Decimal(str(self.cfg.trade_size_usd.sample()))
+        symbols = random.sample(self.cfg.symbols, self.cfg.symbols_per_trade)
+
+        accounts = self.get_ordered_accounts()
+        symbol_actions = await plan_symbol_actions(accounts, symbols, total_usd, self.cfg.leverage)
+        if symbol_actions is None:
             logger.error("No valid account combination found for trading.")
             return
 
-        # 2. Calculate quantities
-        market = random.choice(self.cfg.markets)
-        price = await actions[0].client.get_price(market)
-        lot_size = await actions[0].client.get_lot_size(market)
+        # 3. Check min trade size per symbol
+        for symbol, actions in symbol_actions.items():
+            await check_min_trade_sizes(actions, symbol)
+            size_usd = sum(x.size_usd for x in actions)
+            rest_sizes = " ".join(str(x.size_usd) for x in actions[1:])
+            rest_sizes = f"{sum(x.size_usd for x in actions[1:])} ({rest_sizes})"
+            logger.info(f"Trade {symbol}: {size_usd} = {actions[0].size_usd} + {rest_sizes}")
 
-        for act in actions:
-            act.qty = usd_to_qty(act.size_usd, price, lot_size)
+        # 4. Open positions symbol by symbol
+        for symbol, actions in symbol_actions.items():
+            await self.open_symbol_positions(symbol, actions)
 
-        size_usd = sum(x.size_usd for x in actions)
-        rest_sizes = " ".join([str(x.size_usd) for x in actions[1:]])
-        rest_sizes = f"{sum(x.size_usd for x in actions[1:])} ({rest_sizes})"
-        logger.info(f"Trade {market}: {size_usd} = {actions[0].size_usd} + {rest_sizes}")
+        # 5. Wait with safety checks
+        success = await hold_positions(symbol_actions, self.cfg, self.stop_event)
 
-        # 3. Check min trade size per account
-        await check_min_trade_sizes(actions, market)
+        # 6. Close positions symbol by symbol
+        for symbol, actions in symbol_actions.items():
+            acts = [act.client for act in actions]
+            use_limit = self.cfg.use_limit and success
+            await close_symbol_positions(acts, symbol, self.cfg, use_limit=use_limit)
 
-        # 4. Set leverage
-        await ensure_leverage(self.accounts, market, self.cfg.leverage)
-
-        # 5. Open positions
-        await open_positions(actions, market, self.cfg)
-
-        # 6. Wait with safety checks
-        success = await wait_with_checks(actions, market, self.cfg, self.stop_event)
-
-        # 7. Close positions
-        await close_positions(
-            actions, market, self.accounts, self.cfg, use_limit=success and self.cfg.use_limit
-        )
-
-        # 8. Report P/L
+        # 7. Report P/L
         await self.report_pnl(balances)
 
     # MARK: Helpers
 
+    @retry(max_attempts=3, delay=2.0)
     async def get_balances(self) -> list[tuple[str, float]]:
         bals = await asyncio.gather(*[acc.balance() for acc in self.accounts])
         return [(acc.name, float(b)) for acc, b in zip(self.accounts, bals)]
 
-    def plan_trades(self, balances: list[tuple[str, float]]) -> list[TradeAction] | None:
-        if self.cfg.first_as_main:
-            balances = balances[:1] + utils.shuffle(balances[1:])
-        else:
-            balances = utils.shuffle(balances)
+    def get_ordered_accounts(self) -> list[TradingClient]:
+        return (
+            self.accounts[:1] + utils.shuffle(self.accounts[1:])
+            if self.cfg.first_as_main
+            else utils.shuffle(self.accounts)
+        )
 
-        size_usd = self.cfg.trade_size_usd.sample()
-        pairs = utils.find_safe_pair(balances, size_usd, self.cfg.leverage)
-        if pairs is None:
-            return None
+    async def open_symbol_positions(self, symbol: str, actions: list[TradeAction]) -> None:
+        price = await actions[0].client.get_price(symbol)
+        lot_size = await actions[0].client.get_lot_size(symbol)
 
-        accounts_map = {acc.name: acc for acc in self.accounts}
-        main_side: Side = random.choice(["bid", "ask"])
+        for act in actions:
+            act.qty = usd_to_qty(act.size_usd, price, lot_size)
 
-        return [
-            TradeAction(
-                client=accounts_map[name],
-                side=main_side if i == 0 else opposite_side(main_side),
-                size_usd=Decimal(str(size)),
-            )
-            for i, (name, size) in enumerate(pairs)
-        ]
+        await ensure_leverage([act.client for act in actions], symbol, self.cfg.leverage)
+        await open_positions(actions, symbol, self.cfg)
+        if any(act.order is None for act in actions):
+            raise RuntimeError(f"Failed to open positions for {symbol}")
 
     async def report_pnl(self, was: list[tuple[str, float]]):
         now = await self.get_balances()
@@ -201,6 +187,12 @@ def _check_cfg(cfg: StrategyConfig, accs: Sequence[TradingClient]):
 
     if n < 2:
         raise FatalError(f"At least 2 accounts are required for trading, got {n}")
+
+    if cfg.symbols_per_trade > 1 and len(cfg.symbols) != cfg.symbols_per_trade:
+        raise FatalError(
+            f"symbols_per_trade={cfg.symbols_per_trade} requires exactly "
+            f"{cfg.symbols_per_trade} symbols, got {len(cfg.symbols)}"
+        )
 
     if cfg.group_size is None and n > 5:
         raise FatalError("Single-group mode supports up to 5 enabled accounts")

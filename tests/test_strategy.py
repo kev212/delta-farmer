@@ -2,20 +2,23 @@
 
 import asyncio
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
 from strategy.delta import DeltaStrategy
 from strategy.execution import (
     TradeAction,
+    _position_roi,
     check_min_trade_sizes,
-    check_positions,
+    close_symbol_positions,
     ensure_leverage,
+    hold_positions,
     open_positions,
-    wait_with_checks,
+    positions_within_limits,
 )
 from strategy.models import StrategyConfig
-from strategy.trading import Order, OrderStatus, Position, Side, limit_order_and_wait
+from strategy.trading import Order, OrderStatus, Position, Side, TradingClient, fill_limit_order
 
 
 async def _instant_sleep(_):
@@ -46,23 +49,42 @@ def make_position(symbol: str, side: Side, size: str, entry: str = "50000") -> P
 def make_cfg(**kw) -> StrategyConfig:
     return StrategyConfig.model_validate(
         {
-            "markets": ["BTC"],
+            "symbols": ["BTC"],
             "leverage": 10,
             "trade_size_usd": [100, 100],
             "trade_duration": [1, 1],
             "trade_cooldown": [1, 1],
             "trade_heartbeat": 1,
-            "pnl_limit": 0.25,
+            "position_roi_limit": 0.8,
+            "combined_roi_limit": 0.1,
             **kw,
         }
     )
 
 
 def make_action(client, side: Side, qty: str = "0.002") -> TradeAction:
-    return TradeAction(client=client, side=side, size_usd=Decimal("100"), qty=Decimal(qty))
+    return TradeAction(
+        client=cast(TradingClient, client), side=side, size_usd=Decimal("100"), qty=Decimal(qty)
+    )
 
 
-class MockClient:
+def make_symbol_actions(clients: list["MockClient"]) -> dict[str, list[TradeAction]]:
+    main, acc2, acc3 = clients
+    return {
+        "BTC": [
+            TradeAction(cast(TradingClient, main), "bid", Decimal("25")),
+            TradeAction(cast(TradingClient, acc2), "ask", Decimal("10")),
+            TradeAction(cast(TradingClient, acc3), "ask", Decimal("15")),
+        ],
+        "ETH": [
+            TradeAction(cast(TradingClient, main), "ask", Decimal("25")),
+            TradeAction(cast(TradingClient, acc2), "bid", Decimal("10")),
+            TradeAction(cast(TradingClient, acc3), "bid", Decimal("15")),
+        ],
+    }
+
+
+class MockClient(TradingClient):
     """Minimal TradingClient that records calls and returns controllable values."""
 
     exchange = "mock"
@@ -70,7 +92,7 @@ class MockClient:
     def __init__(self, name: str, balance: float = 1000, side: Side = "bid", price: float = 50000):
         self._name = name
         self._balance = Decimal(str(balance))
-        self._side = side
+        self._side: Side = side
         self._price = Decimal(str(price))
         self._positions: list[Position] | None = None  # None = default (one BTC position)
         self.calls: list[str] = []
@@ -94,29 +116,29 @@ class MockClient:
         self._rec("balance")
         return self._balance
 
-    async def get_price(self, s):
+    async def get_price(self, symbol: str):
         self._rec("get_price")
         return self._price
 
-    async def get_bbo(self, s):
+    async def get_bbo(self, symbol: str):
         return Decimal("49999"), Decimal("50001")
 
-    async def get_lot_size(self, s):
+    async def get_lot_size(self, symbol: str):
         return Decimal("0.001")
 
-    async def get_tick_size(self, s):
+    async def get_tick_size(self, symbol: str):
         return Decimal("1")
 
-    async def get_min_trade_usd(self, s):
+    async def get_min_trade_usd(self, symbol: str):
         return self._min_trade_usd
 
-    async def get_leverage(self, s):
+    async def get_leverage(self, symbol: str):
         self._rec("get_leverage")
         return self._leverage
 
-    async def set_leverage(self, s, lev):
+    async def set_leverage(self, symbol: str, leverage: int):
         self._rec("set_leverage")
-        self._leverage = lev
+        self._leverage = leverage
 
     async def positions(self):
         self._rec("positions")
@@ -126,23 +148,25 @@ class MockClient:
             else [make_position("BTC", self._side, "0.002")]
         )
 
-    async def close_position(self, p):
+    async def close_position(self, position: Position):
         self._rec("close_position")
         return True
 
-    async def market_order(self, s, side, qty, reduce_only=False):
+    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False):
         self._rec("market_order")
-        return make_order("ord-m", s, side, qty)
+        return make_order("ord-m", symbol, side, qty)
 
-    async def limit_order(self, s, side, qty, price, reduce_only=False):
+    async def limit_order(
+        self, symbol: str, side: Side, qty: Decimal, price: Decimal, reduce_only=False
+    ):
         self._rec("limit_order")
-        return make_order("ord-l", s, side, qty)
+        return make_order("ord-l", symbol, side, qty)
 
-    async def cancel_order(self, o):
+    async def cancel_order(self, order: Order):
         self._rec("cancel_order")
         return True
 
-    async def get_order(self, oid):
+    async def get_order(self, order_id: str):
         self._rec("get_order")
         return None
 
@@ -184,36 +208,41 @@ async def test_leverage_skipped_when_correct():
     assert "set_leverage" not in a.calls
 
 
-# MARK: check_positions
+async def test_position_roi_single_position():
+    """Single market ROI should return roi, pnl, and entry cost."""
+    a = MockClient("a", price=55000)
+    a._positions = [make_position("BTC", "bid", "0.002", "50000")]
+    assert await _position_roi(a, "BTC") == (Decimal("0.1"), Decimal("10"), Decimal("100"))
 
 
-async def test_check_within_pnl_limit():
-    """No price change → roi=0, returns True."""
-    a = MockClient("a", price=50000)
-    actions = [make_action(a, "bid")]
-    assert await check_positions(actions, "BTC", 0.25) is True
+async def test_positions_within_limits_combined_roi():
+    """Combined ROI should sum pnl and entry cost across symbols."""
+    a = MockClient("main")
+    b = MockClient("acc2")
+    a._positions = [make_position("BTC", "bid", "1", "100")]
+    b._positions = [make_position("ETH", "bid", "1", "100")]
 
+    async def price_a(symbol):
+        return Decimal("120")
 
-async def test_check_bid_loss_exceeds_limit():
-    """Long position loses 40% (price drop) → exceeds 25% limit → False."""
-    a = MockClient("a", price=30000)  # entry=50000, now 30000 → -40% on long
-    actions = [make_action(a, "bid")]
-    assert await check_positions(actions, "BTC", 0.25) is False
+    async def price_b(symbol):
+        return Decimal("101")
 
+    a.get_price = price_a  # type: ignore[method-assign]
+    b.get_price = price_b  # type: ignore[method-assign]
 
-async def test_check_ask_loss_exceeds_limit():
-    """Short position loses 40% (price rise) → exceeds 25% limit → False."""
-    a = MockClient("a", price=70000)  # entry=50000, now 70000 → -40% on short
-    actions = [make_action(a, "ask")]
-    assert await check_positions(actions, "BTC", 0.25) is False
+    symbol_actions = {
+        "BTC": [TradeAction(a, "bid", Decimal("100"))],
+        "ETH": [TradeAction(b, "bid", Decimal("100"))],
+    }
 
+    ok = await positions_within_limits(
+        symbol_actions,
+        position_roi_limit=Decimal("0.8"),
+        combined_roi_limit=Decimal("0.1"),
+    )
 
-async def test_check_missing_position():
-    """0 positions on market → unexpected state → returns False."""
-    a = MockClient("a")
-    a._positions = []
-    actions = [make_action(a, "bid")]
-    assert await check_positions(actions, "BTC", 0.25) is False
+    assert ok is False
 
 
 # MARK: open_positions
@@ -237,7 +266,7 @@ async def test_open_limit_mode_fills(monkeypatch):
     async def fake_limit(*args, **kw):
         return filled
 
-    monkeypatch.setattr("strategy.execution._limit_order_and_wait", fake_limit)
+    monkeypatch.setattr("strategy.execution._fill_limit_order", fake_limit)
     actions = [make_action(a, "bid"), make_action(b, "ask")]
     await open_positions(actions, "BTC", make_cfg(use_limit=True))
     assert "market_order" not in a.calls  # main doesn't use market
@@ -251,14 +280,14 @@ async def test_open_limit_mode_fails_aborts(monkeypatch):
     async def fake_limit_fail(*args, **kw):
         return None
 
-    monkeypatch.setattr("strategy.execution._limit_order_and_wait", fake_limit_fail)
+    monkeypatch.setattr("strategy.execution._fill_limit_order", fake_limit_fail)
     actions = [make_action(a, "bid"), make_action(b, "ask")]
     await open_positions(actions, "BTC", make_cfg(use_limit=True))
     assert "market_order" not in b.calls  # rest NOT opened
     assert "cancel_all_orders" in a.calls  # cleanup triggered
 
 
-# MARK: wait_with_checks
+# MARK: hold_positions
 
 
 async def test_wait_stop_event_exits_early():
@@ -266,8 +295,11 @@ async def test_wait_stop_event_exits_early():
     a = MockClient("a")
     stop = asyncio.Event()
     stop.set()
-    actions = [make_action(a, "bid")]
-    result = await wait_with_checks(actions, "BTC", make_cfg(trade_duration=[5, 5]), stop)
+    result = await hold_positions(
+        {"BTC": [make_action(a, "bid")]},
+        make_cfg(trade_duration=[5, 5]),
+        stop,
+    )
     assert result is False
     assert "positions" not in a.calls  # no checks ran
 
@@ -275,15 +307,16 @@ async def test_wait_stop_event_exits_early():
 async def test_wait_normal_completion_returns_true():
     """Stable price, 1s duration → wait completes normally → True."""
     a = MockClient("a", price=50000)
-    result = await wait_with_checks([make_action(a, "bid")], "BTC", make_cfg())
+    result = await hold_positions({"BTC": [make_action(a, "bid")]}, make_cfg())
     assert result is True
 
 
 async def test_wait_stop_loss_exits_early():
-    """Price moves past pnl_limit during wait → returns False before duration."""
-    a = MockClient("a", price=80000)  # 60% move on long, entry=50000
-    result = await wait_with_checks(
-        [make_action(a, "bid")], "BTC", make_cfg(trade_duration=[10, 10])
+    """Price moves past position_roi_limit → returns False before duration."""
+    a = MockClient("a", price=95000)  # 90% move on long, entry=50000
+    result = await hold_positions(
+        {"BTC": [make_action(a, "bid")]},
+        make_cfg(trade_duration=[10, 10]),
     )
     assert result is False
 
@@ -315,11 +348,227 @@ async def test_cycle_skips_when_no_valid_pair():
     assert "market_order" not in b.calls
 
 
-# MARK: DeltaStrategy _loop behavior
+def test_strategy_config_accepts_legacy_markets_field(recwarn):
+    cfg = StrategyConfig.model_validate(
+        {
+            "markets": ["BTC", "ETH"],
+            "symbols_per_trade": 2,
+            "leverage": 10,
+            "trade_size_usd": [100, 100],
+            "trade_duration": [1, 1],
+            "trade_cooldown": [1, 1],
+            "trade_heartbeat": 1,
+        }
+    )
+
+    assert cfg.symbols == ["BTC", "ETH"]
+
+
+def test_strategy_config_rejects_conflicting_symbols_and_markets():
+    with pytest.raises(ValueError, match="Use `symbols` only"):
+        StrategyConfig.model_validate(
+            {
+                "symbols": ["BTC"],
+                "markets": ["ETH"],
+                "leverage": 10,
+                "trade_size_usd": [100, 100],
+                "trade_duration": [1, 1],
+                "trade_cooldown": [1, 1],
+                "trade_heartbeat": 1,
+            }
+        )
+
+
+async def test_cycle_multi_symbol_keeps_double_delta_and_order(monkeypatch):
+    # Both symbols must be neutral, and each account must net to zero across symbols.
+    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    strategy = DeltaStrategy(make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2), accs)
+    strategy.initial_bal = Decimal("3000")
+    symbol_actions = make_symbol_actions(accs)
+    checked: list[str] = []
+    opened: list[str] = []
+    closed: list[tuple[str, bool]] = []
+
+    async def fake_plan(*_args, **_kw):
+        return symbol_actions
+
+    async def fake_check(actions, symbol):
+        checked.append(symbol)
+
+    async def fake_open(self, symbol, actions):
+        opened.append(symbol)
+
+    async def fake_wait(*_args, **_kw):
+        return True
+
+    async def fake_close(accs, symbol, cfg, use_limit=False):
+        closed.append((symbol, use_limit))
+
+    monkeypatch.setattr("strategy.delta.random.sample", lambda seq, n: list(seq)[:n])
+    monkeypatch.setattr("strategy.delta.plan_symbol_actions", fake_plan)
+    monkeypatch.setattr("strategy.delta.check_min_trade_sizes", fake_check)
+    monkeypatch.setattr("strategy.delta.hold_positions", fake_wait)
+    monkeypatch.setattr(DeltaStrategy, "open_symbol_positions", fake_open)
+    monkeypatch.setattr("strategy.delta.close_symbol_positions", fake_close)
+
+    await strategy.trade_cycle()
+
+    assert checked == ["BTC", "ETH"]
+    assert opened == ["BTC", "ETH"]
+    assert closed == [("BTC", False), ("ETH", False)]
+
+    for actions in symbol_actions.values():
+        bids = sum(x.size_usd for x in actions if x.side == "bid")
+        asks = sum(x.size_usd for x in actions if x.side == "ask")
+        assert bids == asks
+
+    totals = {acc.name: {"bid": Decimal(0), "ask": Decimal(0)} for acc in accs}
+    for actions in symbol_actions.values():
+        for action in actions:
+            totals[action.client.name][action.side] += action.size_usd
+
+    for acc in accs:
+        assert totals[acc.name]["bid"] == totals[acc.name]["ask"]
+
+
+async def test_cycle_aborts_before_open_when_any_symbol_min_size_fails(monkeypatch):
+    # Min-size validation must finish for all symbols before any open starts.
+    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    strategy = DeltaStrategy(make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2), accs)
+    strategy.initial_bal = Decimal("3000")
+    opened: list[str] = []
+
+    async def fake_plan(*_args, **_kw):
+        return make_symbol_actions(accs)
+
+    async def fake_check(actions, symbol):
+        if symbol == "ETH":
+            raise RuntimeError("min size fail")
+
+    async def fake_open(self, symbol, actions):
+        opened.append(symbol)
+
+    monkeypatch.setattr("strategy.delta.random.sample", lambda seq, n: list(seq)[:n])
+    monkeypatch.setattr("strategy.delta.plan_symbol_actions", fake_plan)
+    monkeypatch.setattr("strategy.delta.check_min_trade_sizes", fake_check)
+    monkeypatch.setattr(DeltaStrategy, "open_symbol_positions", fake_open)
+
+    with pytest.raises(RuntimeError, match="min size fail"):
+        await strategy.trade_cycle()
+
+    assert opened == []
+
+
+async def test_close_symbol_positions_passes_single_symbol_and_order(monkeypatch):
+    # Symbol close helper must preserve account order for one symbol.
+    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    seen: list[tuple[str, list[str], bool]] = []
+
+    async def fake_positions_main():
+        return [make_position("ETH", "ask", "0.002")]
+
+    async def fake_positions_acc2():
+        return [make_position("ETH", "bid", "0.002")]
+
+    async def fake_positions_acc3():
+        return [make_position("ETH", "bid", "0.002")]
+
+    async def fake_fill(*args, **kwargs):
+        return make_order("ord-l", "ETH", "bid", Decimal("0.002"))
+
+    async def fake_close_position(position):
+        seen.append(("ETH", [position.symbol], True))
+        return True
+
+    accs[0].positions = fake_positions_main  # type: ignore[method-assign]
+    accs[1].positions = fake_positions_acc2  # type: ignore[method-assign]
+    accs[2].positions = fake_positions_acc3  # type: ignore[method-assign]
+    accs[1].close_position = fake_close_position  # type: ignore[method-assign]
+    accs[2].close_position = fake_close_position  # type: ignore[method-assign]
+    monkeypatch.setattr("strategy.execution._fill_limit_order", fake_fill)
+
+    await close_symbol_positions(cast(list[TradingClient], accs), "ETH", make_cfg(), use_limit=True)
+
+    assert seen == [("ETH", ["ETH"], True), ("ETH", ["ETH"], True)]
+
+
+async def test_cycle_multi_symbol_use_limit_false(monkeypatch):
+    # Symbol-by-symbol open/close must preserve use_limit=False.
+    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    strategy = DeltaStrategy(
+        make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2, use_limit=False), accs
+    )
+    strategy.initial_bal = Decimal("3000")
+    opened: list[tuple[str, bool]] = []
+    closed: list[tuple[str, bool]] = []
+
+    async def fake_plan(*_args, **_kw):
+        return make_symbol_actions(accs)
+
+    async def fake_open(actions, symbol, cfg):
+        opened.append((symbol, cfg.use_limit))
+        for act in actions:
+            act.order = make_order(f"ord-{symbol}", symbol, act.side, Decimal("0.001"))
+
+    async def fake_wait(*_args, **_kw):
+        return True
+
+    async def fake_close(accs, symbol, cfg, use_limit=False):
+        closed.append((symbol, use_limit))
+
+    monkeypatch.setattr("strategy.delta.random.sample", lambda seq, n: list(seq)[:n])
+    monkeypatch.setattr("strategy.delta.plan_symbol_actions", fake_plan)
+    monkeypatch.setattr("strategy.delta.hold_positions", fake_wait)
+    monkeypatch.setattr("strategy.delta.open_positions", fake_open)
+    monkeypatch.setattr("strategy.delta.close_symbol_positions", fake_close)
+
+    await strategy.trade_cycle()
+
+    assert opened == [("BTC", False), ("ETH", False)]
+    assert closed == [("BTC", False), ("ETH", False)]
+
+
+async def test_cycle_multi_symbol_use_limit_true(monkeypatch):
+    # Symbol-by-symbol open/close must preserve use_limit=True.
+    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    strategy = DeltaStrategy(
+        make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2, use_limit=True), accs
+    )
+    strategy.initial_bal = Decimal("3000")
+    opened: list[tuple[str, bool]] = []
+    closed: list[tuple[str, bool]] = []
+
+    async def fake_plan(*_args, **_kw):
+        return make_symbol_actions(accs)
+
+    async def fake_open(actions, symbol, cfg):
+        opened.append((symbol, cfg.use_limit))
+        for act in actions:
+            act.order = make_order(f"ord-{symbol}", symbol, act.side, Decimal("0.001"))
+
+    async def fake_wait(*_args, **_kw):
+        return True
+
+    async def fake_close(accs, symbol, cfg, use_limit=False):
+        closed.append((symbol, use_limit))
+
+    monkeypatch.setattr("strategy.delta.random.sample", lambda seq, n: list(seq)[:n])
+    monkeypatch.setattr("strategy.delta.plan_symbol_actions", fake_plan)
+    monkeypatch.setattr("strategy.delta.hold_positions", fake_wait)
+    monkeypatch.setattr("strategy.delta.open_positions", fake_open)
+    monkeypatch.setattr("strategy.delta.close_symbol_positions", fake_close)
+
+    await strategy.trade_cycle()
+
+    assert opened == [("BTC", True), ("ETH", True)]
+    assert closed == [("BTC", True), ("ETH", True)]
+
+
+# MARK: DeltaStrategy run behavior
 
 
 async def test_loop_closes_all_on_startup():
-    """_loop calls close_all before first trade cycle (clean up previous run)."""
+    """run() calls close_all before first trade cycle (clean up previous run)."""
     a, b = MockClient("a"), MockClient("b")
     stop = asyncio.Event()
     strategy = DeltaStrategy(make_cfg(), [a, b], stop_event=stop)
@@ -332,7 +581,7 @@ async def test_loop_closes_all_on_startup():
                 return
             await asyncio.sleep(0.05)
 
-    task = asyncio.create_task(strategy._loop())
+    task = asyncio.create_task(strategy.run())
     await stop_after_cleanup()
     try:
         await asyncio.wait_for(task, timeout=3)
@@ -343,9 +592,10 @@ async def test_loop_closes_all_on_startup():
 
 
 async def test_loop_closes_all_on_exception():
-    """If trade_cycle raises, _loop calls close_all before re-raising."""
+    """If trade_cycle raises, run() calls close_all and retries until MAX_FAILURES."""
     a, b = MockClient("a"), MockClient("b")
     strategy = DeltaStrategy(make_cfg(), [a, b])
+    strategy._wait = lambda _sec: asyncio.sleep(0)  # type: ignore[method-assign]
 
     async def boom():
         raise RuntimeError("exchange down")
@@ -353,19 +603,19 @@ async def test_loop_closes_all_on_exception():
     strategy.trade_cycle = boom  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError):
-        await strategy._loop()
+        await strategy.run()
 
     assert "cancel_all_orders" in a.calls
 
 
-# MARK: limit_order_and_wait
+# MARK: fill_limit_order
 
 
 async def test_limit_filled_immediately_no_polling():
     """limit_order() returns FILLED order, get_order never called (market-fallback case)."""
     a = MockClient("a")
     # MockClient.limit_order returns FILLED by default
-    result = await limit_order_and_wait(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"))
+    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"))
     assert result is not None
     assert result.status == OrderStatus.FILLED
     assert "get_order" not in a.calls
@@ -393,7 +643,7 @@ async def test_limit_open_get_order_none_raises_fatal(monkeypatch):
     # get_order returns None by default in MockClient
 
     with pytest.raises(FatalError, match="never appeared"):
-        await limit_order_and_wait(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=0)
+        await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=0)
 
 
 async def test_limit_open_polls_until_filled(monkeypatch):
@@ -431,9 +681,7 @@ async def test_limit_open_polls_until_filled(monkeypatch):
     a.limit_order = open_limit  # type: ignore[method-assign]
     a.get_order = eventually_filled  # type: ignore[method-assign]
 
-    result = await limit_order_and_wait(
-        a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=60
-    )
+    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=60)
     assert result is not None
     assert result.status == OrderStatus.FILLED
     assert call_count >= 3

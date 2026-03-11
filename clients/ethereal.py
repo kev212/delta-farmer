@@ -408,9 +408,8 @@ class EtherealClient:
         }
 
     async def points(self, season: int = 1, epoch: int = 2) -> list[EtherealPoint]:
-        sub = await self.subaccount()
         hdr = await self._eip712_auth_headers(3)
-        pld = {"address": self.address, "season": season, "epoch": epoch, "subaccount": sub.name}
+        pld = {"address": self.address, "season": season, "epoch": epoch}
         res = await self._call("GET", "/points", params=pld, headers=hdr)
         return [EtherealPoint.model_validate(x) for x in res.get("data", [])]
 

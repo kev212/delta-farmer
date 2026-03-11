@@ -286,16 +286,15 @@ async def gather_cancel(tasks: list[asyncio.Task], timeout: float) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def raise_if_cancelled(stop_event: asyncio.Event | None):
-    if stop_event and stop_event.is_set():
-        raise asyncio.CancelledError
-
-
 async def interruptible_sleep(sec: float, stop_event: asyncio.Event | None = None) -> None:
     """Sleep for sec seconds, raising CancelledError early if stop_event fires."""
     if stop_event is None:
         await asyncio.sleep(sec)
         return
+
+    if stop_event.is_set():
+        raise asyncio.CancelledError
+
     try:
         await asyncio.wait_for(stop_event.wait(), timeout=sec)
         raise asyncio.CancelledError

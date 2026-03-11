@@ -69,8 +69,10 @@ def init(
         "version": version.strip(),
         "$lib": APP_ID,
         "$session_id": _session_id,
+        "$current_url": f"cli://{APP_ID}/{exchange}/{command}",
     }
     _context.update(pld)
+    track("$pageview")
 
     try:
         loop = asyncio.get_running_loop()

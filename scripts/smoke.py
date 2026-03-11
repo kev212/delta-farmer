@@ -1,6 +1,6 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
 # Smoke test – quick sanity check that the exchange API is still alive.
-# Tests one account (first in config) with a symbol that must NOT be in config markets.
+# Tests one account (first in config) with a symbol that must NOT be in config symbols.
 # Usage: uv run scripts/smoke.py omni|pacifica SYMBOL SIZE_USD [-c xxx.toml]
 import argparse
 import asyncio
@@ -199,7 +199,7 @@ async def smoke(client: TradingClient, symbol: str, size_usd: float) -> tuple[in
 async def main():
     parser = argparse.ArgumentParser(prog="smoke", description="Smoke test for exchange clients")
     parser.add_argument("exchange", choices=["ethereal", "nado", "omni", "pacifica"])
-    parser.add_argument("symbol", help="Symbol to test (must NOT be in config markets)")
+    parser.add_argument("symbol", help="Symbol to test (must NOT be in config symbols)")
     parser.add_argument("size", type=float, help="Trade size in USD")
     parser.add_argument(
         "-c", "--config", default=None, help="Path to config file (auto-detected if omitted)"
@@ -231,16 +231,16 @@ async def main():
     acc_cfg = cfg.accounts[0]
     client = client_from_config(acc_cfg)  # type: ignore
 
-    if args.symbol in cfg.markets:
+    if args.symbol in cfg.symbols:
         parser.error(
-            f"symbol '{args.symbol}' is in config markets {cfg.markets} — "
+            f"symbol '{args.symbol}' is in config symbols {cfg.symbols} — "
             "pick a different symbol to avoid conflicting with the running bot"
         )
     symbol = args.symbol
 
     print(f"exchange : {args.exchange}")
     print(f"account  : {acc_cfg.name}")
-    print(f"symbol   : {symbol}  (bot markets: {', '.join(cfg.markets)})")
+    print(f"symbol   : {symbol}  (bot symbols: {', '.join(cfg.symbols)})")
     print(f"size     : ${args.size} USD")
 
     passed, failed = await smoke(client, symbol, args.size)
