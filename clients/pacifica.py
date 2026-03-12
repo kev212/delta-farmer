@@ -379,14 +379,14 @@ class PacificaClient:
     async def portfolio(self):
         res = await self._call("GET", f"/portfolio?account={self.keypair.pubkey()}&time_range=all")
         res = res["data"][-1]
-        return Decimal(res["account_equity"]), Decimal(res["pnl"])
+        return Decimal(res["pnl"])
 
     async def profile(self) -> ProfileInfo:
         pts, vol = await asyncio.gather(self.points_total(), self.total_volume())
-        eqt, pnl = await self.portfolio()
+        bal, pnl = await asyncio.gather(self.balance(), self.portfolio())
         return ProfileInfo(
             addr=utils.short_addr(str(self.keypair.pubkey()), 4, 4),
-            balance=eqt,
+            balance=bal,
             volume=vol,
             pnl=pnl,
             points=pts.points,
