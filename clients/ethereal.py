@@ -267,8 +267,6 @@ class EtherealClient:
         nonce = str(time.time_ns())
         now_sec = int(time.time())
 
-        price_str = f" @ {price}" if price else ""
-        logger.debug(f"{'Market' if is_market else 'Limit'} {side} {qty} {symbol}{price_str}")
 
         data: dict[str, Any] = {
             "sender": self.address,

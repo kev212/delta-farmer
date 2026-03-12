@@ -330,13 +330,11 @@ class OmniClient:
         res = await self._call("GET", "/points/summary")
         return PointsInfo(**res) if res else PointsInfo(total_points=Decimal(0))
 
-    async def total_volume(self) -> Decimal:
+    async def total_volume(self):
         res = await self._call("GET", "/referrals/summary")
-        if "trade_volume" in res:
-            return Decimal(res["trade_volume"]["current"])
-        elif "own_volume" in res:
-            return Decimal(res["own_volume"]["total"])
-        return Decimal(0)
+        vol = Decimal(res.get("trade_volume", {}).get("current") or "0")
+        ref: str | None = res.get("referred_by", {}).get("code") or None
+        return vol, ref
 
     async def pnl(self) -> Decimal:
         params = {"limit": 20, "offset": 0, "period": "total", "ranking": "pnl"}
@@ -348,8 +346,8 @@ class OmniClient:
         # Omni have Cloudflare protection, so do it one by one to avoid triggering anti-bot
         bal = await self.balance()
         pts = await self.points_total()
-        vol = await self.total_volume()
         pnl = await self.pnl()
+        vol, ref = await self.total_volume()
 
         return ProfileInfo(
             addr=utils.short_addr(self.address),
@@ -357,4 +355,5 @@ class OmniClient:
             volume=vol,
             pnl=pnl,
             points=pts.total_points,
+            ref_code=ref,
         )

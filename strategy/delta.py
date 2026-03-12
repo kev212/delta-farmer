@@ -126,8 +126,8 @@ class DeltaStrategy:
             await close_symbol_positions(acts, symbol, self.cfg, use_limit=use_limit)
 
         # 7. Report P/L
-        pnl = await self.report_pnl(balances)
-        await tg.on_trade_stop(pnl, time.time() - stime, reply_to=msg_id)
+        pnl, now_bals = await self.report_pnl(balances)
+        await tg.on_trade_stop(pnl, time.time() - stime, now_bals, reply_to=msg_id)
         tg.on_trade(total_size, pnl)
 
     # MARK: Helpers
@@ -157,14 +157,14 @@ class DeltaStrategy:
         if failed:
             raise RuntimeError(f"Failed to open {symbol} on: {', '.join(failed)}")
 
-    async def report_pnl(self, was: list[tuple[str, float]]) -> float:
+    async def report_pnl(self, was: list[tuple[str, float]]) -> tuple[float, list[tuple[str, float]]]:
         now = await self.get_balances()
         diff_sum = sum(x[1] for x in now) - sum(x[1] for x in was)
         diff_str = [(x[0], x[1] - y[1]) for x, y in zip(now, was)]
         diff_str = " | ".join([f"{name} {diff:+.2f}" for name, diff in diff_str])
         total_pnl = sum(x[1] for x in now) - float(self.initial_bal)
         logger.info(f"Δ {diff_sum:+.2f} ~ {diff_str}; Total P/L: {total_pnl:+.2f}")
-        return diff_sum
+        return diff_sum, now
 
 
 # MARK: Groups

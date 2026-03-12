@@ -102,11 +102,12 @@ async def on_trade_start(symbols: list[str], size_usd: float, accounts: list[str
     return await send(msg)
 
 
-async def on_trade_stop(pnl: float, duration: float, reply_to: int | None = None) -> None:
+async def on_trade_stop(pnl: float, duration: float, balances: list[tuple[str, float]], reply_to: int | None = None) -> None:
     if not enabled() or "stop" not in _state.cfg.notify:
         return
 
-    await send(f"⚪ Trade done — {_fmt_pnl(pnl)} · {_fmt_dur(duration)}", reply_to=reply_to)
+    bal_str = " | ".join(f"{name} ${bal:,.0f}" for name, bal in balances)
+    await send(f"⚪ Trade done — {_fmt_pnl(pnl)} · {_fmt_dur(duration)}\n{bal_str}", reply_to=reply_to)
 
 
 async def on_error(error: str, attempt: int, max_attempts: int) -> None:
