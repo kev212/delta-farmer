@@ -121,6 +121,13 @@ class AutoTable:
     def render(self):
         self._flush_group()
 
+        def fmt_cell(col: Column, val) -> str:
+            try:
+                return "tbd" if val is _TBD else col.fmt.format(val) if val is not None else ""
+            except Exception as e:
+                logger.error(f"Error formatting column '{col.name}' value {val!r}: {e}")
+                return "err"
+
         tbl = Table(title=self.title, box=self.box, show_footer=True)
         totals = self._compute_totals_for_rows(self.rows)
 
@@ -128,8 +135,7 @@ class AutoTable:
             tbl.add_column(self._gtitle, justify="left")
 
         for i, col in enumerate(self.columns):
-            footer = col.fmt.format(totals[i]) if totals[i] is not None else ""
-            footer = footer if col.grand_total else ""
+            footer = fmt_cell(col, totals[i]) if col.grand_total else ""
             if i == 0 and self._groups:
                 footer = "TOTAL"
 
@@ -147,14 +153,7 @@ class AutoTable:
             subtotals = self._compute_totals_for_rows(subrows)
 
             self._render_rows(tbl, subrows, title)
-            footer = [
-                "tbd"
-                if subtotals[i] is _TBD
-                else col.fmt.format(subtotals[i])
-                if subtotals[i] is not None
-                else ""
-                for i, col in enumerate(self.columns)
-            ]
+            footer = [fmt_cell(col, subtotals[i]) for i, col in enumerate(self.columns)]
 
             footer.insert(0, "")  # for group title column
             footer[1] = "Total"  # for first data column

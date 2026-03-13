@@ -19,18 +19,27 @@ from strategy.trading import close_all
 T = TypeVar("T")
 DD = defaultdict[str, defaultdict[str, T]]
 
-_EPOCH_PREFIX: dict[str, str] = {"Private Alpha": "ALP", "Off Season": "OFF"}
+# Named epochs before weekly cadence kicked in (end = next entry's start or _W1_START)
+_NAMED_EPOCHS: list[tuple[str, datetime]] = [
+    ("ALP", datetime(2025, 11, 20, tzinfo=timezone.utc)),
+    ("OFF", datetime(2026, 1, 16, tzinfo=timezone.utc)),
+]
+_W1_START = datetime(2026, 1, 31, tzinfo=timezone.utc)
 
 
-def _epoch_label(ep: NadoPoint) -> str:
-    start = ep.since.strftime("%b%d")
-    end = (ep.until - timedelta(seconds=1)).strftime("%b%d") if ep.until != ep.since else start
-    desc = ep.description
-    if desc.startswith("Week "):
-        n = int(desc.split()[1])
-        return f"W{n:02d} {start}-{end}"
-    prefix = _EPOCH_PREFIX.get(desc, desc[:3].upper())
-    return f"{prefix} {start}-{end}"
+def _period_label(dt: datetime) -> str:
+    for i, (prefix, since) in enumerate(_NAMED_EPOCHS):
+        until = _NAMED_EPOCHS[i + 1][1] if i + 1 < len(_NAMED_EPOCHS) else _W1_START
+        if since <= dt < until:
+            s, e = since.strftime("%b%d"), (until - timedelta(seconds=1)).strftime("%b%d")
+            return f"{prefix} {s}-{e}"
+    if dt >= _W1_START:
+        n = (dt - _W1_START).days // 7 + 1
+        since = _W1_START + timedelta(weeks=n - 1)
+        until = since + timedelta(weeks=1)
+        s, e = since.strftime("%b%d"), (until - timedelta(seconds=1)).strftime("%b%d")
+        return f"W{n:02d} {s}-{e}"
+    return dt.strftime("%Y-%m-%d")
 
 
 class Config(StrategyConfig):
@@ -97,16 +106,8 @@ async def print_stats(accs: list[NadoClient], period="week", filter_period="all"
         gather_accs(accs, lambda acc: sync_points(acc, ttl)),
     )
 
-    # Epoch boundaries come from the API — use them for both trades and points
-    epochs = sorted(all_points[0] if all_points else [], key=lambda ep: ep.since)
-
     def period_fn(dt: datetime) -> str:
-        if period == "day":
-            return dt.strftime("%Y-%m-%d")
-        for ep in epochs:
-            if ep.since <= dt < ep.until:
-                return _epoch_label(ep)
-        return dt.strftime("%Y-%m-%d")  # fallback: unmatched (before/after all epochs)
+        return dt.strftime("%Y-%m-%d") if period == "day" else _period_label(dt)
 
     for acc, trades in zip(accs, all_trades):
         for t in trades:
@@ -115,15 +116,7 @@ async def print_stats(accs: list[NadoClient], period="week", filter_period="all"
         for p in pts:
             gpoints[period_fn(p.since)][acc.name] = p.points
 
-    epoch_order = {_epoch_label(ep): ep.since for ep in epochs}
-    all_periods = sorted(
-        gtrades.keys() | gpoints.keys(),
-        key=lambda k: (
-            epoch_order[k]
-            if k in epoch_order
-            else datetime.fromisoformat(k).replace(tzinfo=timezone.utc)
-        ),
-    )
+    all_periods = sorted(gtrades.keys() | gpoints.keys())
     periods_to_show = parse_filter(filter_period, all_periods)
     all_names = [x.name for x in accs]
 

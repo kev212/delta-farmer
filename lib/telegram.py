@@ -59,7 +59,7 @@ def _format_report() -> str:
         per100k = abs(pnl) / vol * 1e5 if vol else 0.0
         lines.append(
             f"\n*{exchange}*: {trades} trades · ${vol:,.0f} vol"
-            f" · burn: {_fmt_pnl(pnl)} · $/100k: ${per100k:.2f}"
+            f" · burn: {_fmt_pnl(pnl)} · $∕100k: ${per100k:.2f}"
         )
         total_trades += trades
         total_vol += vol
