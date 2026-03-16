@@ -76,15 +76,15 @@ def make_action(client, side: Side, qty: str = "0.002") -> TradeAction:
 
 
 def make_symbol_actions(clients: list["MockClient"]) -> dict[str, list[TradeAction]]:
-    main, acc2, acc3 = clients
+    prime, acc2, acc3 = clients
     return {
         "BTC": [
-            TradeAction(cast(TradingClient, main), "bid", Decimal("25")),
+            TradeAction(cast(TradingClient, prime), "bid", Decimal("25")),
             TradeAction(cast(TradingClient, acc2), "ask", Decimal("10")),
             TradeAction(cast(TradingClient, acc3), "ask", Decimal("15")),
         ],
         "ETH": [
-            TradeAction(cast(TradingClient, main), "ask", Decimal("25")),
+            TradeAction(cast(TradingClient, prime), "ask", Decimal("25")),
             TradeAction(cast(TradingClient, acc2), "bid", Decimal("10")),
             TradeAction(cast(TradingClient, acc3), "bid", Decimal("15")),
         ],
@@ -224,7 +224,7 @@ async def test_position_roi_single_position():
 
 async def test_positions_within_limits_combined_roi():
     """Combined ROI should sum pnl and entry cost across symbols."""
-    a = MockClient("main")
+    a = MockClient("prime")
     b = MockClient("acc2")
     a._positions = [make_position("BTC", "bid", "1", "100")]
     b._positions = [make_position("ETH", "bid", "1", "100")]
@@ -266,7 +266,7 @@ async def test_open_market_mode():
 
 
 async def test_open_limit_mode_fills(monkeypatch):
-    """Limit mode: main uses limit order, rest use market orders."""
+    """Limit mode: prime uses limit order, rest use market orders."""
     a, b = MockClient("a"), MockClient("b", side="ask")
     filled = make_order("ord-l", "BTC", "bid", Decimal("0.002"))
 
@@ -276,12 +276,12 @@ async def test_open_limit_mode_fills(monkeypatch):
     monkeypatch.setattr("strategy.execution._fill_limit_order", fake_limit)
     actions = [make_action(a, "bid"), make_action(b, "ask")]
     await open_positions(actions, "BTC", make_cfg(use_limit=True))
-    assert "market_order" not in a.calls  # main doesn't use market
+    assert "market_order" not in a.calls  # prime doesn't use market
     assert b.calls.count("market_order") == 1  # rest use market
 
 
 async def test_open_limit_mode_fails_aborts(monkeypatch):
-    """If limit order for main fails (None), no market orders placed for rest."""
+    """If limit order for prime fails (None), no market orders placed for rest."""
     a, b = MockClient("a"), MockClient("b", side="ask")
 
     async def fake_limit_fail(*args, **kw):
@@ -350,7 +350,7 @@ async def test_cycle_skips_when_no_valid_pair():
 
 async def test_cycle_multi_symbol_keeps_double_delta_and_order(monkeypatch):
     # Both symbols must be neutral, and each account must net to zero across symbols.
-    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    accs = [MockClient("prime"), MockClient("acc2"), MockClient("acc3")]
     strategy = DeltaStrategy(make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2), accs)
     strategy.initial_bal = Decimal("3000")
     symbol_actions = make_symbol_actions(accs)
@@ -402,7 +402,7 @@ async def test_cycle_multi_symbol_keeps_double_delta_and_order(monkeypatch):
 
 async def test_cycle_aborts_before_open_when_any_symbol_min_size_fails(monkeypatch):
     # Min-size validation must finish for all symbols before any open starts.
-    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    accs = [MockClient("prime"), MockClient("acc2"), MockClient("acc3")]
     strategy = DeltaStrategy(make_cfg(symbols=["BTC", "ETH"], symbols_per_trade=2), accs)
     strategy.initial_bal = Decimal("3000")
     opened: list[str] = []
@@ -430,7 +430,7 @@ async def test_cycle_aborts_before_open_when_any_symbol_min_size_fails(monkeypat
 
 async def test_close_symbol_positions_passes_single_symbol_and_order(monkeypatch):
     # Symbol close helper must preserve account order for one symbol.
-    accs = [MockClient("main"), MockClient("acc2"), MockClient("acc3")]
+    accs = [MockClient("prime"), MockClient("acc2"), MockClient("acc3")]
     seen: list[tuple[str, list[str], bool]] = []
 
     async def fake_positions_main():

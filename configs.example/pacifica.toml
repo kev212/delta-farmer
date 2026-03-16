@@ -11,7 +11,7 @@ trade_heartbeat = "15s"  # Position monitoring interval
 use_limit = false  # Use limit orders instead of market (lower fees but may not fill)
 limit_wait = "90s"  # Max time to wait for limit order since first partial fill
 limit_market_fallback = true  # Use market order if limit fails (false = cancel & retry next cycle)
-first_as_main = true  # Always use first account as main (false = random selection)
+first_as_prime = true  # Always use first account as prime (false = random selection)
 
 
 # Accounts (recommended: $100+ balance per account for delta-neutral pairs)

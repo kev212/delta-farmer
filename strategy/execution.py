@@ -163,13 +163,13 @@ async def check_min_trade_sizes(actions: list[TradeAction], symbol: str) -> None
 
 
 async def open_positions(acts: list[TradeAction], symbol: str, cfg: StrategyConfig) -> None:
-    """Open positions for one symbol. With use_limit: main account (acts[0]) fills limit first,
+    """Open positions for one symbol. With use_limit: prime account (acts[0]) fills limit first,
     then hedge accounts open via market in parallel. On limit failure with no fallback — abort."""
     all_acts = acts
     if cfg.use_limit:
-        main, acts = acts[0], acts[1:]
-        main.order = await _fill_limit_order(main.client, symbol, main.side, main.qty, cfg)
-        if main.order is None:
+        prime, acts = acts[0], acts[1:]
+        prime.order = await _fill_limit_order(prime.client, symbol, prime.side, prime.qty, cfg)
+        if prime.order is None:
             await close_all([act.client for act in all_acts])
             return
 
@@ -187,12 +187,12 @@ async def close_symbol_positions(
     assert len(set(acc.name for acc in accs)) == len(accs), "Duplicate accounts in close_positions"
 
     if use_limit:
-        main, accs = accs[0], accs[1:]
-        positions = await main.positions()
+        prime, accs = accs[0], accs[1:]
+        positions = await prime.positions()
         positions = [p for p in positions if p.symbol == symbol]
         for pos in positions:
             side = opposite_side(pos.side)
-            await _fill_limit_order(main, pos.symbol, side, pos.size, cfg, reduce_only=True)
+            await _fill_limit_order(prime, pos.symbol, side, pos.size, cfg, reduce_only=True)
 
     async def _close_market(acc: TradingClient) -> None:
         for pos in [p for p in await acc.positions() if p.symbol == symbol]:

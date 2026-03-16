@@ -1,110 +1,87 @@
 # Delta Farmer
 
-Delta-neutral trading bot for multiple exchanges (Ethereal, Omni, Nado, Pacifica). It can run classic single-symbol hedges or the newer multi-symbol balanced mode that splits one cycle across 1-4 symbols while keeping both account-level and symbol-level exposure neutral.
+> Update this file after any structural change without being asked.
 
-## Project Structure
+Delta-neutral trading bot. Exchanges: Ethereal, Omni, Nado, Pacifica.
+
+## Module map
+
+| file | what lives there |
+|------|-----------------|
+| `strategy/models.py` | `Side`, `Order`, `Position`, `ProfileInfo`, `TradingClient` protocol, `TradeAction`, `StrategyConfig`, `load_config`, `usd_to_qty`, `opposite_side` |
+| `strategy/execution.py` | `fill_limit_order`, `open_positions`, `close_symbol_positions`, `hold_positions`, `positions_within_limits`, `close_all` (no warmup, retries 3×) |
+| `strategy/planner.py` | `plan_symbol_actions`, `calc_symbol_sizes`, `calc_total_from_pct` |
+| `strategy/delta.py` | `DeltaStrategy` class only |
+| `strategy/runner.py` | `run_groups` (app entry point), `close_all` (with warmup — CLI only) |
+| `lib/models.py` | `DurationSec`, `SizeRange`, `TimeRange`, `TgConfig`, `AccountConfig` |
+| `lib/utils.py` | math, time, file I/O, `random_partition`, `find_safe_pair`, async helpers |
+| `lib/telegram.py` | notifications: `on_trade_start/stop`, `on_error`, `on_crash` |
+| `clients/{exchange}.py` | implement `TradingClient` |
+| `apps/{exchange}.py` | CLI launcher per exchange |
+
+## Two `close_all` — don't mix up
+
+- `execution.close_all` — called during trading, no warmup, retries 3× with backoff, never raises
+- `runner.close_all` — called by CLI `close` command, does `warmup()` first
+
+## Trade flow
 
 ```
-strategy/        # trading protocol, strategy logic, config models
-  trading.py     # TradingClient protocol, Order/Position models, utilities
-  delta.py       # DeltaStrategy – main trading loop; run_groups – grouped mode
-  execution.py   # execution primitives: open/close positions, ROI safety checks, hold loop
-  models.py      # StrategyConfig, Range, DurationSec, load_config
-  planner.py     # trade planner for multi-symbol/account-balanced action sets
-
-lib/             # generic infrastructure (no trading logic)
-  utils.py       # math, time, file I/O, misc utilities
-  http.py        # AsyncHttp base class with caching/proxy support
-  decorators.py  # retry, ttl_cache, bind_log_context
-  crypto.py      # encrypt/decrypt private keys in config
-  store.py       # DataStore – persistent pickle-based state
-  table.py       # AutoTable – rich terminal display
-  cli.py         # create_cli(name, config_path, sec_fields) + run_app()
-  logger.py      # loguru logger setup
-  telemetry.py   # anonymous usage tracking (PostHog)
-
-clients/         # one file per exchange, implements TradingClient protocol
-  ethereal.py    # EVM-based, uses limit orders, signer key support
-  omni.py        # EVM-based, limit orders fall back to market internally
-  nado.py        # EVM-based
-  pacifica.py    # Solana-based
-
-apps/            # launchers – one file per exchange
-configs/         # TOML config files (gitignored)
-configs.example/ # example config files
+run_groups (runner)
+  → _check_cfg, _warmup_all, tg.start()
+  → split accounts into groups (group_size or single)
+  → DeltaStrategy.run() per group  [parallel asyncio tasks, staggered 10–30s]
+      → trade_cycle()
+          → get_balances → get_trade_size (usd or pct)
+          → plan_symbol_actions → dict[symbol, list[TradeAction]]
+          → check_min_trade_sizes
+          → open_symbol_positions × each symbol  (ensure_leverage → open_positions)
+          → hold_positions  (positions_within_limits every heartbeat)
+          → close_symbol_positions × each symbol
+          → report_pnl → tg.on_trade_stop
 ```
 
-## Architecture
+## Prime / hedge
 
-**TradingClient** (`strategy/trading.py`) — protocol all clients implement. Strategy code depends only on the protocol, never on concrete clients. Key types: `Side = Literal["bid", "ask"]`, `Position`, `Order`.
+First account = **prime** (limit order if `use_limit=true`). Rest = **hedge** (market always).
+`first_as_prime=true` pins config order; otherwise shuffled each cycle.
+`first_as_prime` is silently ignored when `group_size` is set.
 
-**DeltaStrategy** (`strategy/delta.py`) — works with any list of `TradingClient` instances. Trade cycle: fetch balances → pick 1..`symbols_per_trade` symbols → build a per-symbol action plan → validate min sizes → ensure leverage → open positions symbol-by-symbol → hold with ROI safety checks → close symbol-by-symbol → cooldown → repeat. Apps use `run_groups(cfg, accs)` which handles both single and grouped mode.
+## Config non-obvious bits
 
-**Group parallelism**: each group (typically 2 accounts) runs as an independent asyncio task. Multiple groups execute fully concurrently. Within a single group, symbols are processed sequentially (open symbol A → open symbol B → hold → close A → close B).
+Full spec in `StrategyConfig` (`strategy/models.py`):
+- `trade_size_usd` ⊕ `trade_size_pct` — exactly one required, mutually exclusive
+- `trade_size_pct` → `calc_total_from_pct`: prime gets 50%, hedges split the other 50%, binding constraint is tightest account
+- `symbols_per_trade > 1` → `len(symbols)` must equal `symbols_per_trade` (max 4)
+- `group_size` must evenly divide enabled account count (max 5 accounts per group)
+- `regroup_interval` → stops groups, re-sorts by balance, restarts
+- Deprecated: `markets` → `symbols`, `first_as_main` → `first_as_prime`
+- Durations: `"15s"` / `"5m"` / `"1h"` or int seconds; ranges: `[min, max]`
 
-**Planner** (`strategy/planner.py`) — finds a safe account combination for the sampled trade size, then distributes that size across 1-4 symbols. For multi-symbol cycles it keeps every symbol delta-neutral and also keeps each participating account net-neutral across the full basket. Hedge account sizes have ±10% random jitter (`random_partition` in `lib/utils.py`) — noise is sum-neutral so total exposure stays exact, but individual legs differ slightly to avoid perfectly symmetric patterns.
+## Safety checks (positions_within_limits)
 
-**Execution primitives** (`strategy/execution.py`) — stateless async helpers used by DeltaStrategy:
+Dual-layer, runs every `trade_heartbeat`:
+1. Per-leg ROI ≥ `position_roi_limit` (±80%) → emergency close
+2. Combined basket ROI ≥ `combined_roi_limit` (±10%) → emergency close
+3. Position count ≠ 1 for any symbol → liquidation/manual close detected → emergency close
 
-- `open_positions`: with `use_limit=True` — main account opens via limit order first (sequential, waits up to `limit_wait`), then all hedge accounts open simultaneously via market. With `use_limit=False` — all accounts open in parallel via market. If limit fails and no fallback — the whole group is aborted via `close_all`.
-- `hold_positions`: heartbeat loop (`trade_heartbeat`) that calls `positions_within_limits` every tick. Returns False early if limits breached or stop_event set. Tolerates transient API errors (logged on 2nd consecutive identical error, then ignored).
-- `positions_within_limits`: **dual-layer safety check** — (1) per-position ROI (`position_roi_limit`, default ±80%) triggers close if any single leg drifts too far; (2) combined basket ROI (`combined_roi_limit`, default ±10%) triggers close if the whole hedge is breaking down even when individual legs look fine. Also detects liquidations and unexpected closes: if a position disappears (API returns 0 positions for a symbol), returns False → triggers emergency `close_all` for the group.
-- `close_all`: best-effort parallel cleanup, retries 3× with backoff, never raises.
+Transient API errors: logged only on 2nd consecutive identical error, then ignored (avoid false-positive closes).
 
-**StrategyConfig** (`strategy/models.py`) — base config extended by each app with an `accounts` list:
+## Adding an exchange
 
-```toml
-symbols               = ["BTC", "ETH"]  # symbols the strategy is allowed to trade
-symbols_per_trade     = 1               # 1 = classic mode, 2-4 = balanced multi-symbol basket
-leverage              = 10              # target leverage set on each participating account
-trade_size_usd        = [100, 500]      # random total notional sampled for the cycle
-trade_duration        = ["1m", "5m"]    # how long to hold positions before normal close
-trade_cooldown        = ["30s", "2m"]   # delay between completed trade cycles
-trade_heartbeat       = "15s"           # interval between safety checks while holding
-position_roi_limit    = 0.8             # close if any single position reaches +/-80% ROI
-combined_roi_limit    = 0.1             # close if the whole basket reaches +/-10% ROI
-use_limit             = false           # use limit order for the main account instead of market
-limit_wait            = "90s"           # max time to wait for limit fill handling
-limit_market_fallback = true            # fall back to market when a limit attempt does not fill
-first_as_main         = false           # in single-group mode, pin the first account as main
-group_size            = 2               # optional: split enabled accounts into equal groups
-regroup_interval      = "12h"           # optional: stop groups, rebalance, then restart
-```
+1. `clients/{exchange}.py` — implement `TradingClient` (`strategy/models.py`). `exchange = "..."` class var. Qty in base asset only, never USD.
+2. `apps/{exchange}.py` — follow `apps/pacifica.py`. `Config(StrategyConfig)` with `accounts: list[AccountConfig]`. Commands: `trade` → `run_groups`, `close` → `runner.close_all`, `info`/`stats` → custom.
 
-`symbols_per_trade > 1` requires `len(symbols) == symbols_per_trade`; the planner currently supports up to 4 symbols in one cycle.
+## Conventions
 
-Duration fields accept `"15s"` / `"5m"` / `"1h"` strings or plain integers (seconds). Range fields accept `[min, max]` lists.
+- `os.path` not pathlib
+- `uv run` for everything (pytest, pyright, ruff, scripts)
+- `bid`/`ask` for sides; `prime`/`hedge` for account roles
+- `# MARK: Section name` for dividers (not `# ---`)
+- Compact code, no verbose constructs
 
-## Adding a New Exchange Client
-
-1. Create `clients/{exchange}.py` — follow `clients/pacifica.py` as reference. Required:
-   - `exchange = "{exchange}"` class variable (used by notifications)
-   - `name` property
-   - All `TradingClient` protocol methods (see `strategy/trading.py`)
-   - Client methods work with qty in base asset — **never USD**
-   - Use `bid`/`ask` side terminology; adapt to exchange's native terms internally
-
-2. Create `apps/{exchange}.py` — follow `apps/pacifica.py` as reference. Key parts:
-   - `AccountConfig` (pydantic, with `decrypt_privkey` validator) + `Config(StrategyConfig)`
-   - `cli = create_cli("{exchange}", "configs/{exchange}.toml", ["privkey"])`
-   - `match cli.command` handling: `trade` → `run_groups`, `close` → `close_all`, `info`/`stats` → exchange-specific
-   - Entry: `run_app(main())`
-
-## Code Quality
+## Quality
 
 ```bash
-uv run pyright                  # type checking
-uv run ruff format .            # formatting
-uv run ruff check --fix .       # linting
+uv run pytest && uv run pyright && uv run ruff format . && uv run ruff check --fix .
 ```
-
-Use `make lint` and `make test` periodically while working — after a logical chunk of changes, before wrapping up a task, or whenever something feels uncertain. Not required after every single edit, but don't skip them at the end of a session.
-
-## Rules
-
-- **No pathlib** — use `os.path` instead
-- **Use `uv run`** for Python commands, scripts, tests, and tools
-- **`bid/ask`** for side terminology (not buy/sell)
-- **`# MARK: Section name`** for section dividers in code (not `# ---` or `# ===`)
-- Client methods work with qty (base asset); USD conversion is the strategy's responsibility
-- Write compact code, avoid verbose constructs

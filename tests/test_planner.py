@@ -58,10 +58,10 @@ def test_calc_symbol_sizes_rejects_more_than_five_symbols():
 
 
 async def test_plan_symbol_actions_keeps_symbol_and_account_delta_neutral(monkeypatch):
-    accounts = [DummyClient("main"), DummyClient("acc2"), DummyClient("acc3")]
+    accounts = [DummyClient("prime"), DummyClient("acc2"), DummyClient("acc3")]
 
     def fake_find_safe_pair(_balances, _size_usd, _leverage):
-        return [("main", Decimal("50")), ("acc2", Decimal("20")), ("acc3", Decimal("30"))]
+        return [("prime", Decimal("50")), ("acc2", Decimal("20")), ("acc3", Decimal("30"))]
 
     monkeypatch.setattr("strategy.planner.find_safe_pair", fake_find_safe_pair)
     monkeypatch.setattr("strategy.planner.random.choice", lambda _: "bid")
@@ -71,7 +71,7 @@ async def test_plan_symbol_actions_keeps_symbol_and_account_delta_neutral(monkey
         symbols=["BTC", "ETH", "SOL"],
         total_size_usd=Decimal("100"),
         leverage=10,
-        balances=[("main", 1000.0), ("acc2", 1000.0), ("acc3", 1000.0)],
+        balances=[("prime", 1000.0), ("acc2", 1000.0), ("acc3", 1000.0)],
     )
 
     assert plan is not None
@@ -80,7 +80,7 @@ async def test_plan_symbol_actions_keeps_symbol_and_account_delta_neutral(monkey
         assert _sum_side(actions, "bid") == _sum_side(actions, "ask")
 
     totals: dict[str, dict[str, Decimal]] = {
-        "main": {"bid": Decimal(0), "ask": Decimal(0)},
+        "prime": {"bid": Decimal(0), "ask": Decimal(0)},
         "acc2": {"bid": Decimal(0), "ask": Decimal(0)},
         "acc3": {"bid": Decimal(0), "ask": Decimal(0)},
     }
@@ -88,7 +88,7 @@ async def test_plan_symbol_actions_keeps_symbol_and_account_delta_neutral(monkey
         for action in actions:
             totals[action.client.name][action.side] += action.size_usd
 
-    assert totals["main"]["bid"] == totals["main"]["ask"] == Decimal("25.000")
+    assert totals["prime"]["bid"] == totals["prime"]["ask"] == Decimal("25.000")
     assert totals["acc2"]["bid"] == totals["acc2"]["ask"] == Decimal("10.000")
     assert totals["acc3"]["bid"] == totals["acc3"]["ask"] == Decimal("15.000")
 
@@ -114,45 +114,45 @@ async def test_plan_symbol_actions_returns_none_when_pair_not_found(monkeypatch)
 def test_calc_total_from_pct_two_accounts():
     # 2 accounts, each gets 50% share → binding is min balance
     # min bal = 500, share = 0.5 → total = 500 * 10 * SAFE_PCT / 0.5
-    bals = [("main", 1000.0), ("hedge", 500.0)]
+    bals = [("prime", 1000.0), ("hedge", 500.0)]
     assert calc_total_from_pct(bals, leverage=10, pct=1.0) == 500 * 10 * SAFE_PCT / Decimal("0.5")
 
 
-def test_calc_total_from_pct_min_on_main():
-    # min balance on main (50% share) is the binding constraint
-    # main: 100 * 10 * SAFE_PCT / 0.5 ← binding; hedge: 900 * 10 * SAFE_PCT / 0.5
-    bals = [("main", 100.0), ("hedge", 900.0)]
+def test_calc_total_from_pct_min_on_prime():
+    # min balance on prime (50% share) is the binding constraint
+    # prime: 100 * 10 * SAFE_PCT / 0.5 ← binding; hedge: 900 * 10 * SAFE_PCT / 0.5
+    bals = [("prime", 100.0), ("hedge", 900.0)]
     assert calc_total_from_pct(bals, leverage=10, pct=1.0) == 100 * 10 * SAFE_PCT / Decimal("0.5")
 
 
 def test_calc_total_from_pct_min_on_hedge():
     # min balance on hedge (25% share) allows larger total than if it were main
     # h1: 100 * 10 * SAFE_PCT / 0.25 ← binding
-    bals = [("main", 900.0), ("h1", 100.0), ("h2", 900.0)]
+    bals = [("prime", 900.0), ("h1", 100.0), ("h2", 900.0)]
     assert calc_total_from_pct(bals, leverage=10, pct=1.0) == 100 * 10 * SAFE_PCT / Decimal("0.25")
 
 
 def test_calc_total_from_pct_main_binding_despite_larger_balance():
-    # main has more balance than hedges, but 50% share makes it binding
-    # main: 300 * 10 * SAFE_PCT / 0.5 ← binding; hedges: 200 * 10 * SAFE_PCT / 0.25
-    bals = [("main", 300.0), ("h1", 200.0), ("h2", 200.0)]
+    # prime has more balance than hedges, but 50% share makes it binding
+    # prime: 300 * 10 * SAFE_PCT / 0.5 ← binding; hedges: 200 * 10 * SAFE_PCT / 0.25
+    bals = [("prime", 300.0), ("h1", 200.0), ("h2", 200.0)]
     result = calc_total_from_pct(bals, leverage=10, pct=1.0)
     assert result == 300 * 10 * SAFE_PCT / Decimal("0.5")
     assert result < 200 * 10 * SAFE_PCT / Decimal("0.25")
 
 
 def test_calc_total_from_pct_pct_scales_linearly():
-    bals = [("main", 1000.0), ("hedge", 1000.0)]
+    bals = [("prime", 1000.0), ("hedge", 1000.0)]
     full = calc_total_from_pct(bals, leverage=10, pct=1.0)
     half = calc_total_from_pct(bals, leverage=10, pct=0.5)
     assert half == full / 2
 
 
 async def test_plan_symbol_actions_uses_actual_pair_total(monkeypatch):
-    accounts = [DummyClient("main"), DummyClient("acc2"), DummyClient("acc3")]
+    accounts = [DummyClient("prime"), DummyClient("acc2"), DummyClient("acc3")]
 
     def fake_find_safe_pair(_balances, _size_usd, _leverage):
-        return [("main", Decimal("40")), ("acc2", Decimal("10")), ("acc3", Decimal("30"))]
+        return [("prime", Decimal("40")), ("acc2", Decimal("10")), ("acc3", Decimal("30"))]
 
     monkeypatch.setattr("strategy.planner.find_safe_pair", fake_find_safe_pair)
     monkeypatch.setattr("strategy.planner.random.choice", lambda _: "bid")
@@ -162,7 +162,7 @@ async def test_plan_symbol_actions_uses_actual_pair_total(monkeypatch):
         symbols=["BTC", "ETH"],
         total_size_usd=Decimal("100"),
         leverage=10,
-        balances=[("main", 1000.0), ("acc2", 1000.0), ("acc3", 1000.0)],
+        balances=[("prime", 1000.0), ("acc2", 1000.0), ("acc3", 1000.0)],
     )
 
     assert plan is not None

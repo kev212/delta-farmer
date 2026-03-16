@@ -146,7 +146,7 @@ class DeltaStrategy:
     def get_ordered_accounts(self) -> list[TradingClient]:
         return (
             self.accounts[:1] + utils.shuffle(self.accounts[1:])
-            if self.cfg.first_as_main
+            if self.cfg.first_as_prime
             else utils.shuffle(self.accounts)
         )
 

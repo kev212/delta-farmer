@@ -16,7 +16,7 @@ SAFE_PCT = Decimal("0.96")  # leave 4% margin to avoid liquidation on leverage r
 def calc_total_from_pct(balances: list[tuple[str, float]], leverage: int, pct: float) -> Decimal:
     """Compute max safe total trade size from account balances in execution order.
 
-    ordered_balances[0] is main (gets 50% of total).
+    ordered_balances[0] is prime (gets 50% of total).
     ordered_balances[1:] are hedge accounts (split the remaining 50% equally).
     The binding constraint is the account whose balance is smallest relative to its share.
     """
@@ -37,7 +37,7 @@ def calc_total_from_pct(balances: list[tuple[str, float]], leverage: int, pct: f
 def calc_symbol_sizes(
     total: Decimal,
     symbols: Sequence[str],
-    main_side: Side,
+    prime_side: Side,
 ) -> dict[str, tuple[Decimal, Side]]:
     if not symbols:
         return {}
@@ -46,20 +46,20 @@ def calc_symbol_sizes(
         raise ValueError("up to 4 symbols are supported")
 
     if len(symbols) == 1:
-        return {symbols[0]: (total, main_side)}
+        return {symbols[0]: (total, prime_side)}
 
-    n_main = len(symbols) // 2
-    n_rest = len(symbols) - n_main
+    n_prime = len(symbols) // 2
+    n_rest = len(symbols) - n_prime
     half = total * Decimal("0.5")
     out: dict[str, tuple[Decimal, Side]] = {}
 
     for i, symbol in enumerate(symbols):
-        if i < n_main:
-            size = round_to_tick_size(half / n_main, _MARKET_SIZE_TICK)
-            side = main_side
+        if i < n_prime:
+            size = round_to_tick_size(half / n_prime, _MARKET_SIZE_TICK)
+            side = prime_side
         else:
             size = round_to_tick_size(half / n_rest, _MARKET_SIZE_TICK)
-            side = opposite_side(main_side)
+            side = opposite_side(prime_side)
         out[symbol] = (size, side)
 
     return out
@@ -78,11 +78,11 @@ async def plan_symbol_actions(
 
     accounts_map = {acc.name: acc for acc in accounts}
     total_size = Decimal(sum(size for _, size in pairs))  # todo: to_tick
-    main_side: Side = random.choice(["bid", "ask"])
-    symbol_sizes = calc_symbol_sizes(total_size, symbols, main_side)
+    prime_side: Side = random.choice(["bid", "ask"])
+    symbol_sizes = calc_symbol_sizes(total_size, symbols, prime_side)
     plan: dict[str, list[TradeAction]] = {}
 
-    for symbol, (symbol_size, symbol_main_side) in symbol_sizes.items():
+    for symbol, (symbol_size, symbol_prime_side) in symbol_sizes.items():
         ratio = symbol_size / total_size
         actions: list[TradeAction] = []
 
@@ -90,7 +90,7 @@ async def plan_symbol_actions(
             actions.append(
                 TradeAction(
                     client=accounts_map[name],
-                    side=symbol_main_side if j == 0 else opposite_side(symbol_main_side),
+                    side=symbol_prime_side if j == 0 else opposite_side(symbol_prime_side),
                     size_usd=Decimal(str(size)) * ratio,
                 )
             )

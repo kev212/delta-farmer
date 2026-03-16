@@ -242,35 +242,35 @@ def find_safe_pair(bals: list[tuple[str, float]], size_usd: float, leverage: int
     tick_size = Decimal("0.01")  # default tick for USD pairs
 
     # search accounts combinations with enought balance to satisfy sz_usd
-    for main_name, bal in bals:
-        main_size = size_usd / 2
-        if bal * leverage * safety < main_size:
-            continue  # insufficient balance for given main
+    for prime_name, bal in bals:
+        prime_size = size_usd / 2
+        if bal * leverage * safety < prime_size:
+            continue  # insufficient balance for given prime
 
-        rest = [x for x in bals if x[0] != main_name]
-        rest_size = random_partition(main_size, len(rest), precision=0.01)
+        rest = [x for x in bals if x[0] != prime_name]
+        rest_size = random_partition(prime_size, len(rest), precision=0.01)
         for i, (_, bal) in enumerate(rest):
             if bal * leverage * safety < rest_size[i]:
                 break  # insufficient balance for given rest
         else:
-            names = [main_name] + [x[0] for x in rest]
-            sizes = [main_size] + rest_size
+            names = [prime_name] + [x[0] for x in rest]
+            sizes = [prime_size] + rest_size
             return [(na, round_to_tick_size(sz, tick_size)) for na, sz in zip(names, sizes)]
 
-    # fallback: highest balance as main and rest with proportional sizes
+    # fallback: highest balance as prime and rest with proportional sizes
     logger.warning("Low balance on some accounts, trying fallback method...")
-    main_name, main_bal = max(bals, key=lambda x: x[1])
-    main_size = main_bal * leverage * safety
+    prime_name, prime_bal = max(bals, key=lambda x: x[1])
+    prime_size = prime_bal * leverage * safety
 
-    rest = [x for x in bals if x[0] != main_name]
-    rest_size = random_partition(main_size, len(rest), precision=0.01)
+    rest = [x for x in bals if x[0] != prime_name]
+    rest_size = random_partition(prime_size, len(rest), precision=0.01)
     for i, (_, bal) in enumerate(rest):
         if bal * leverage * safety < rest_size[i]:
             logger.error(f"No valid accounts found trade {size_usd:.2f} x{leverage}")
             return None
 
-    names = [main_name] + [x[0] for x in rest]
-    sizes = [main_size] + rest_size
+    names = [prime_name] + [x[0] for x in rest]
+    sizes = [prime_size] + rest_size
     return [(na, round_to_tick_size(sz, tick_size)) for na, sz in zip(names, sizes)]
 
 

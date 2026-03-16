@@ -75,9 +75,9 @@ def _check_cfg(cfg: StrategyConfig, accs: Sequence[TradingClient]):
     if cfg.group_size is not None and n % cfg.group_size != 0:
         raise FatalError(f"{n} enabled accounts is not divisible by group_size={cfg.group_size}")
 
-    if cfg.group_size is not None and cfg.first_as_main:
-        cfg.first_as_main = False
-        logger.warning("group_size is set, ignoring first_as_main=true")
+    if cfg.group_size is not None and cfg.first_as_prime:
+        cfg.first_as_prime = False
+        logger.warning("group_size is set, ignoring first_as_prime=true")
 
     return cfg, accs
 
@@ -101,7 +101,7 @@ async def run_groups(cfg: StrategyConfig, accs: Sequence[TradingClient]) -> None
             "use_limit": cfg.use_limit,
             "group_mode": cfg.group_size is not None,
             "regroup_interval": cfg.regroup_interval is not None,
-            "first_as_main": cfg.first_as_main,
+            "first_as_prime": cfg.first_as_prime,
             "telegram_enabled": tg.enabled(),
         },
     )

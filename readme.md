@@ -105,7 +105,7 @@ Rules:
 - `group_size` must be between `2` and `5`
 - if `group_size` is not set, single-group mode supports at most `5` enabled accounts
 - if `group_size` is set, enabled account count must be divisible by `group_size`
-- when `group_size` is set, `first_as_main` is ignored
+- when `group_size` is set, `first_as_prime` is ignored
 - `regroup_interval` is applied only when `group_size` is set
 
 ### Multi-Symbol Trading Mode
@@ -148,6 +148,7 @@ report_interval = "1h"  # how often to send periodic digest
 ```
 
 To get credentials:
+
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token
 2. Get your chat ID from [@userinfobot](https://t.me/userinfobot)
 3. Encrypt the token: `uv run -m apps.<app> config encrypt`
@@ -155,11 +156,11 @@ To get credentials:
 
 Notification channels:
 
-| Channel   | When                                          |
-| --------- | --------------------------------------------- |
-| `start`   | Trade cycle opens (symbol, size, accounts)    |
-| `stop`    | Trade cycle closes (PnL, duration)            |
-| `errors`  | Cycle failures and crashes                    |
+| Channel   | When                                           |
+| --------- | ---------------------------------------------- |
+| `start`   | Trade cycle opens (symbol, size, accounts)     |
+| `stop`    | Trade cycle closes (PnL, duration)             |
+| `errors`  | Cycle failures and crashes                     |
 | `reports` | Periodic digest (trades, volume, burn, $/100k) |
 
 ### Password Management

@@ -7,7 +7,7 @@ trade_duration = { min = "15m", max = "20m" }  # How long to hold positions
 trade_cooldown = { min = "3m", max = "6m" }  # Wait time between trades
 trade_heartbeat = "15s"  # Position monitoring interval
 
-first_as_main = true  # Always use first account as main (false = random selection)
+first_as_prime = true  # Always use first account as prime (false = random selection)
 
 use_limit = false  # Nado supports limit orders; set true to use for main account
 limit_wait = "90s"  # Timeout before market fallback when use_limit = true
