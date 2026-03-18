@@ -24,7 +24,7 @@ _NAMED_EPOCHS: list[tuple[str, datetime]] = [
     ("ALP", datetime(2025, 11, 20, tzinfo=timezone.utc)),
     ("OFF", datetime(2026, 1, 16, tzinfo=timezone.utc)),
 ]
-_W1_START = datetime(2026, 1, 31, tzinfo=timezone.utc)
+_W1_START = datetime(2026, 1, 30, tzinfo=timezone.utc)
 
 
 def _period_label(dt: datetime) -> str:

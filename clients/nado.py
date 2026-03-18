@@ -57,6 +57,10 @@ _EIP712_TYPES = {
 }
 
 
+def _to_x6(v: Decimal | int | float) -> int:
+    return int(Decimal(str(v)) * Decimal("1e6"))
+
+
 def _to_x18(v: Decimal | int | float) -> int:
     return int(Decimal(str(v)) * Decimal("1e18"))
 
@@ -80,11 +84,17 @@ def _make_nonce() -> int:
     return ((ts_ms + 100_000) << 20) + random.randint(0, (1 << 20) - 1)
 
 
-def _build_appendix(order_type: int = 0, reduce_only=False) -> int:
-    # bits 0-7: version=1, bits 9-10: order_type, bit 11: reduce_only
+# https://docs.nado.xyz/developer-resources/api/order-appendix
+def _build_appendix(order_type=0, reduce_only=False, isolated=False, isolated_margin_x6=0) -> int:
+    # bits 0-7: version=1, bit 8: isolated, bits 9-10: order_type, bit 11: reduce_only
+    # bits 64-127: isolated margin amount (x6 precision)
     v = 1 | ((order_type & 0b11) << 9)
     if reduce_only:
         v |= 1 << 11
+    if isolated:
+        v |= 1 << 8
+        if isolated_margin_x6 > 0:
+            v |= (isolated_margin_x6 & ((1 << 64) - 1)) << 64
     return v
 
 
@@ -94,6 +104,7 @@ class SymbolInfo(BaseModel):
     size_increment: Decimal
     price_increment: Decimal
     min_size: Decimal
+    isolated_only: bool = False
 
 
 class NadoTrade(BaseModel):
@@ -140,6 +151,7 @@ class NadoClient:
         self.address = str(self.account.address)
         self.sender = _build_sender(self.address, "default")
         self._order_products: dict[str, int] = {}  # digest → product_id
+        self._leverage: dict[str, int] = {}  # symbol → configured leverage
 
     async def _query(self, pld: dict) -> dict:
         rep = await self.http.request("GET", "/v1/query", params=pld)
@@ -147,20 +159,20 @@ class NadoClient:
         if not rep.ok or res.get("status") != "success":
             if res.get("error_code") in _NOT_FOUND_CODES:
                 raise NotFoundError(res.get("error", "Not found"))
-            raise ApiError(f"Query error {rep.status_code}: {rep.text[:200]}")
+            raise ApiError(f"Query error {rep.status_code}: {rep.text}")
         return res.get("data", {})
 
     async def _execute(self, pld: dict) -> dict:
         rep = await self.http.request("POST", "/v1/execute", json=pld)
         if not rep.ok or rep.json().get("status") != "success":
-            raise ApiError(f"Query error {rep.status_code}: {rep.text[:200]}")
+            raise ApiError(f"Query error {rep.status_code}: {rep.text}")
 
         return rep.json().get("data", {})
 
     async def _archive(self, pld: dict) -> dict:
         rep = await self.http.request("POST", "https://archive.prod.nado.xyz/v1", json=pld)
         if not rep.ok:
-            raise ApiError(f"Archive error {rep.status_code}: {rep.text[:200]}")
+            raise ApiError(f"Archive error {rep.status_code}: {rep.text}")
         return rep.json()
 
     @ttl_cache(3600)
@@ -203,7 +215,7 @@ class NadoClient:
         pld = {"ticker_id": f"{symbol}-PERP_USDT0", "depth": 1}
         rep = await self.http.request("GET", "/v2/orderbook", params=pld)
         if not rep.ok:
-            raise ApiError(f"Orderbook error for {symbol} - {rep.status_code}: {rep.text[:200]}")
+            raise ApiError(f"Orderbook error for {symbol} - {rep.status_code}: {rep.text}")
 
         data = rep.json()
         bids = data.get("bids", [])
@@ -221,7 +233,7 @@ class NadoClient:
     async def symbols(self) -> list[SymbolInfo]:
         items = await self._query({"type": "symbols"})
         items = list(items.get("symbols", {}).values())
-        items = [x for x in items if x["type"] == "perp"]
+
         return [
             SymbolInfo(
                 product_id=x["product_id"],
@@ -229,6 +241,7 @@ class NadoClient:
                 size_increment=_from_x18(x["size_increment"]),
                 price_increment=_from_x18(x["price_increment_x18"]),
                 min_size=_from_x18(x["min_size"]),
+                isolated_only=bool(x.get("isolated_only", False)),
             )
             for x in items
         ]
@@ -267,15 +280,23 @@ class NadoClient:
                 return _from_x18(b["balance"]["amount"])
         return Decimal(0)
 
+    @ttl_cache(3600)
+    async def _taker_fee_rate(self, product_id: int) -> Decimal:
+        """Return taker fee rate for product_id. Falls back to 0.05% if not found."""
+        res = await self._query({"type": "fee_rates", "sender": self.sender})
+        rates = res.get("taker_fee_rates_x18", [])
+        if product_id < len(rates):
+            return Decimal(rates[product_id]) / Decimal("1e18")
+        logger.warning(f"fee rate for product_id={product_id} not found, using 0.05% fallback")
+        return Decimal("0.0005")
+
     # MARK: Leverage
 
     async def get_leverage(self, symbol: str) -> int | None:
-        # Nado uses cross margin; leverage is order-size based, not a fixed setting
-        return None
+        return self._leverage.get(symbol)
 
     async def set_leverage(self, symbol: str, leverage: int) -> None:
-        # Not applicable for Nado cross margin
-        pass
+        self._leverage[symbol] = leverage
 
     # MARK: Orders
 
@@ -298,7 +319,28 @@ class NadoClient:
 
         nonce = _make_nonce()
         amount = _to_x18(qty) if side == "bid" else -_to_x18(qty)
-        appendix = _build_appendix(order_type=order_type, reduce_only=reduce_only)
+
+        isolated = sym.isolated_only
+        isolated_margin_x6 = 0
+        if isolated and not reduce_only:
+            leverage = self._leverage.get(symbol, 1)
+            fee_rate = await self._taker_fee_rate(sym.product_id)
+            fee = notional * fee_rate
+            mid = await self.get_price(symbol)
+            oracle_notional = qty * mid
+            lev = Decimal(leverage)
+            if side == "bid":  # long: fill at ask ≥ oracle
+                margin_min = notional - oracle_notional * (1 - 1 / lev)
+            else:  # short: fill at bid ≤ oracle, needs extra margin
+                margin_min = oracle_notional * (1 + 1 / lev) - notional
+            isolated_margin_x6 = _to_x6(margin_min * Decimal("1.01") + fee)
+
+        appendix = _build_appendix(
+            order_type=order_type,
+            reduce_only=reduce_only,
+            isolated=isolated,
+            isolated_margin_x6=isolated_margin_x6,
+        )
 
         # uses native int types (as required by Solidity struct)
         msg = {
@@ -431,10 +473,12 @@ class NadoClient:
 
     # MARK: Positions
 
-    async def positions(self) -> list[Position]:
-        res = await self._query({"type": "subaccount_info", "subaccount": self.sender})
-        items: list[Position] = []
-        for b in res.get("perp_balances", []):
+    async def _positions_cross(self) -> list[Position]:
+        items = await self._query({"type": "subaccount_info", "subaccount": self.sender})
+        items = items.get("perp_balances", [])
+
+        rs: list[Position] = []
+        for b in items:
             amount = _from_x18(b["balance"]["amount"])
             if amount == 0:
                 continue
@@ -445,10 +489,11 @@ class NadoClient:
             entry_price = abs(vquote / amount) if amount != 0 else Decimal(0)
 
             oracle_price = Decimal(0)
-            for p in res.get("perp_products", []):
+            for p in items.get("perp_products", []):
                 if p.get("product_id") == b["product_id"]:
                     oracle_price = _from_x18(p.get("oracle_price_x18", "0"))
                     break
+
             pos = Position(
                 id=str(b["product_id"]),
                 symbol=sym.symbol,
@@ -457,9 +502,42 @@ class NadoClient:
                 entry_price=entry_price,
                 unrealized_pnl=amount * oracle_price + vquote,
             )
-            items.append(pos)
+            rs.append(pos)
 
-        return items
+        return rs
+
+    async def _positions_isolated(self) -> list[Position]:
+        items = await self._query({"type": "isolated_positions", "subaccount": self.sender})
+        items = items.get("isolated_positions", [])
+
+        rs: list[Position] = []
+        for p in items:
+            base = p["base_balance"]["balance"]
+            amount = _from_x18(base["amount"])
+            if amount == 0:
+                continue
+            vquote = _from_x18(base.get("v_quote_balance", "0"))
+            entry_price = abs(vquote / amount)
+            oracle_price = _from_x18(p["base_product"]["oracle_price_x18"])
+            product_id = p["base_product"]["product_id"]
+            sym = await self.symbol_info(product_id=product_id)
+
+            pos = Position(
+                id=p["subaccount"],  # isolated sender — used in close_position
+                symbol=sym.symbol,
+                side="bid" if amount > 0 else "ask",
+                size=abs(amount),
+                entry_price=entry_price,
+                unrealized_pnl=amount * oracle_price + vquote,
+            )
+
+            rs.append(pos)
+
+        return rs
+
+    async def positions(self) -> list[Position]:
+        crs_pos, iso_pos = await asyncio.gather(self._positions_cross(), self._positions_isolated())
+        return crs_pos + iso_pos
 
     async def close_position(self, position: Position) -> bool:
         close_side: Side = "ask" if position.side == "bid" else "bid"
@@ -540,9 +618,5 @@ class NadoClient:
         vol = sum((t.volume for t in trades), Decimal(0))
         pnl = sum((t.realized_pnl - t.fee for t in trades), Decimal(0))
         return ProfileInfo(
-            addr=utils.short_addr(self.address),
-            balance=bal,
-            volume=vol,
-            pnl=pnl,
-            points=pts,
+            addr=utils.short_addr(self.address), balance=bal, volume=vol, pnl=pnl, points=pts
         )

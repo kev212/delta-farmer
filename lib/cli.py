@@ -5,6 +5,7 @@ import asyncio
 import glob
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from collections.abc import Coroutine
@@ -23,17 +24,37 @@ def eprint(*args, **kwargs):
     print(*args, **kwargs, file=sys.stderr)
 
 
-def _get_version() -> str:
+def _get_version() -> tuple[str, bool]:
     try:
         pyproject = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
         with open(pyproject) as f:
             match = re.search(r'version\s*=\s*"([^"]+)"', f.read())
-        return f"v{match.group(1)} " if match else ""
+        version = match.group(1) if match else None
+        if not version:
+            return "", True
+
+        repo = os.path.join(os.path.dirname(__file__), "..")
+        try:
+            subprocess.check_output(
+                ["git", "describe", "--exact-match", "--tags", "HEAD"],
+                cwd=repo,
+                stderr=subprocess.DEVNULL,
+            )
+            return f"v{version} ", True
+        except subprocess.CalledProcessError:
+            short = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"], cwd=repo, stderr=subprocess.DEVNULL
+                )
+                .decode()
+                .strip()
+            )
+            return f"v{version}-{short} ", False
     except Exception:
-        return ""
+        return "", True
 
 
-VERSION = _get_version()
+VERSION, IS_RELEASE = _get_version()
 
 
 class _TgOnlyConfig(BaseModel):
@@ -83,7 +104,7 @@ async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argp
     handle_config = config_cli_parser(sub, fields=all_fields)
     args = cli.parse_args()
 
-    telemetry.init(exchange=name, command=args.command or "", version=VERSION)
+    telemetry.init(exchange=name, command=args.command or "", version=VERSION, release=IS_RELEASE)
     telemetry.track("$pageview", {"$current_url": f"cli://delta-farmer/{name}/{args.command}"})
 
     if args.command is None:

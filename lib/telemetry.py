@@ -59,7 +59,12 @@ async def _heartbeat_loop(interval: int) -> None:
 
 
 def init(
-    exchange: str, command: str, version: str = "", flush_interval=120, heartbeat_interval=3600
+    exchange: str,
+    command: str,
+    version: str = "",
+    release: bool = True,
+    flush_interval=120,
+    heartbeat_interval=3600,
 ) -> None:
     pld = {
         "exchange": exchange,
@@ -67,6 +72,7 @@ def init(
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
         "platform": sys.platform,
         "version": version.strip(),
+        "release": release,
         "$lib": APP_ID,
         "$session_id": _session_id,
         "$current_url": f"cli://{APP_ID}/{exchange}/{command}",
