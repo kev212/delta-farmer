@@ -24,6 +24,14 @@ def eprint(*args, **kwargs):
     print(*args, **kwargs, file=sys.stderr)
 
 
+class HelpFormatter(argparse.HelpFormatter):
+    def _iter_indented_subactions(self, action):
+        for subaction in super()._iter_indented_subactions(action):
+            if getattr(subaction, "help", None) == argparse.SUPPRESS:
+                continue
+            yield subaction
+
+
 def _get_version() -> tuple[str, bool]:
     try:
         pyproject = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
@@ -82,7 +90,7 @@ async def _handle_tgtest(name: str) -> None:
 async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argparse.Namespace:
     eprint(f":: delta-farmer {VERSION}| https://x.com/uid127 | https://t.me/eazyrekt")
 
-    cli = argparse.ArgumentParser(prog=name)
+    cli = argparse.ArgumentParser(prog=name, formatter_class=HelpFormatter)
     cli.add_argument("-c", "--config", default=config_path, help="Path to config file")
 
     sub = cli.add_subparsers(dest="command")
@@ -109,6 +117,15 @@ async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argp
 
     all_fields = list(sec_fields) + ([] if "token" in sec_fields else ["token"])
     handle_config = config_cli_parser(sub, fields=all_fields)
+    sub.metavar = (
+        "{"
+        + ",".join(
+            action.dest
+            for action in sub._get_subactions()
+            if getattr(action, "help", None) != argparse.SUPPRESS
+        )
+        + "}"
+    )
     args = cli.parse_args()
 
     telemetry.init(exchange=name, command=args.command or "", version=VERSION, release=IS_RELEASE)

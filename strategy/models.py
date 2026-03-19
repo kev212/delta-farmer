@@ -190,7 +190,7 @@ class StrategyConfig(BaseModel):
                 warnings.warn("`markets` is deprecated, use `symbols` instead")
                 values["symbols"] = values.pop("markets")
             if "first_as_main" in values:
-                warnings.warn("`first_as_main` is deprecated, use `first_as_prime` instead")
+                # warnings.warn("`first_as_main` is deprecated, use `first_as_prime` instead")
                 values["first_as_prime"] = values.pop("first_as_main")
         return values
 

@@ -198,7 +198,8 @@ async def smoke(client: TradingClient, symbol: str, size_usd: float) -> tuple[in
 
 async def main():
     parser = argparse.ArgumentParser(prog="smoke", description="Smoke test for exchange clients")
-    parser.add_argument("exchange", choices=["ethereal", "nado", "omni", "pacifica"])
+    exchanges = ["ethereal", "hyena", "hyperliquid", "nado", "omni", "pacifica"]
+    parser.add_argument("exchange", choices=exchanges)
     parser.add_argument("symbol", help="Symbol to test (must NOT be in config symbols)")
     parser.add_argument("size", type=float, help="Trade size in USD")
     parser.add_argument(
@@ -218,6 +219,10 @@ async def main():
     match args.exchange:
         case "ethereal":
             from apps.ethereal import Config, client_from_config
+        case "hyena":
+            from apps.hyena import Config, client_from_config
+        case "hyperliquid":
+            from apps.hyperliquid import Config, client_from_config
         case "nado":
             from apps.nado import Config, client_from_config
         case "omni":

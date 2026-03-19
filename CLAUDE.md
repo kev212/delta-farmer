@@ -80,6 +80,16 @@ Transient API errors: logged only on 2nd consecutive identical error, then ignor
 - `# MARK: Section name` for dividers (not `# ---`)
 - Compact code, no verbose constructs
 
+## Tasks
+
+Task files live in `tasks/`. Naming: `YYYY-MM-DD_short-name.md` (e.g. `2026-03-17_hip3-clients.md`).
+
+Workflow:
+- Sometimes a task is first **discussed and saved**, then implemented later in a fresh context.
+- Sometimes implementation starts immediately after the task is written.
+- At the start of a new session, read the relevant task file to restore full context before touching code.
+- Task files contain: goal, research findings, API details, implementation plan with ordered steps, open questions.
+
 ## Quality
 
 ```bash
