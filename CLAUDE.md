@@ -90,6 +90,14 @@ Workflow:
 - At the start of a new session, read the relevant task file to restore full context before touching code.
 - Task files contain: goal, research findings, API details, implementation plan with ordered steps, open questions.
 
+## Debugging bugs
+
+1. **Reproduce first** — before touching any code, add debug logging to see the raw data coming from the exchange. Run the app and capture a log that shows the bug.
+2. **Write a failing test** — once the root cause is understood, write a test that fails (red) before applying any fix.
+3. **Fix, then verify green** — apply the fix and confirm the test passes.
+
+Never apply a fix based on guesses without a reproduction. Never skip the failing test step.
+
 ## Quality
 
 ```bash

@@ -445,7 +445,9 @@ class NadoClient:
             self._get_order_live(order_id),
             self._get_order_arch(order_id),
         )
-        return arch or live  # archive is terminal state, takes priority
+        # live is authoritative while order exists; archive only for terminal state.
+        # archive can hold a stale partial-fill snapshot → filled < size → false CANCELED.
+        return live or arch
 
     async def cancel_order(self, order: Order) -> bool:
         sym = await self.symbol_info(symbol=order.symbol)

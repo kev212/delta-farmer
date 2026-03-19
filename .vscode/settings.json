@@ -13,6 +13,7 @@
     ".claude": true,
     ".pytest_cache": true,
     ".python-version": true,
+    ".venv/**": true,
     "**/.gitkeep": true,
     "LICENSE": true,
     "uv.lock": true

@@ -68,9 +68,13 @@ class DeltaStrategy:
 
                 failures += 1
                 if failures >= self.MAX_FAILURES:
-                    logger.error("Too many consecutive failures, stopping strategy")
+                    msg = "Too many consecutive failures, stopping strategy"
+                    logger.opt(exception=True).error(msg)
                     await tg.on_crash(f"{type(e).__name__}: {e}")
-                    raise
+                    # TODO: return exits only this group (others keep running); raise propagates to
+                    # CLI and prints ugly traceback; SystemExit(1) kills the whole process cleanly.
+                    # Decide which behaviour is correct for multi-group mode.
+                    return
 
                 msg = f"Cycle failed ({failures}/{self.MAX_FAILURES}) {type(e).__name__}: {e}"
                 logger.warning(msg)
