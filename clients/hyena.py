@@ -74,7 +74,6 @@ class HyenaClient(HyperLiquidClient):
     # MARK: Auth
 
     async def _login(self) -> str:  # serialized via _login_lock
-
         rep = await self._app_http.request(
             "GET", "/api/auth/nonce", params={"address": self.address}
         )

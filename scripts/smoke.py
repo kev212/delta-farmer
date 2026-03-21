@@ -234,29 +234,32 @@ async def main():
         args.config = matches[0]
         print(f"config   : {args.config} (auto)")
 
-    match args.exchange:
-        case "ethereal":
-            from apps.ethereal import Config, client_from_config
-        case "hyena":
-            from apps.hyena import Config, client_from_config
-        case "hyperliquid":
-            from apps.hyperliquid import Config, client_from_config
-        case "nado":
-            from apps.nado import Config, client_from_config
-        case "omni":
-            from apps.omni import Config, client_from_config
-        case "onyx":
-            from apps.onyx import Config, client_from_config
-        case "pacifica":
-            from apps.pacifica import Config, client_from_config
-        case "zero1":
-            from apps.zero1 import Config, client_from_config
-        case _:
-            parser.error(f"unsupported exchange '{args.exchange}'")
+    from apps.hyperliquid import HyperLiquidNativeClient
+    from clients.ethereal import EtherealClient
+    from clients.hyena import HyenaClient
+    from clients.nado import NadoClient
+    from clients.omni import OmniClient
+    from clients.onyx import OnyxClient
+    from clients.pacifica import PacificaClient
+    from clients.zero1 import ZeroOneClient
+    from strategy import StrategyConfig
 
-    cfg = Config.load(args.config)
+    CLIENT_MAP = {
+        "ethereal": EtherealClient,
+        "hyena": HyenaClient,
+        "hyperliquid": HyperLiquidNativeClient,
+        "nado": NadoClient,
+        "omni": OmniClient,
+        "onyx": OnyxClient,
+        "pacifica": PacificaClient,
+        "zero1": ZeroOneClient,
+    }
+    if args.exchange not in CLIENT_MAP:
+        parser.error(f"unsupported exchange '{args.exchange}'")
+
+    cfg = StrategyConfig.load(args.config)
     acc_cfg = cfg.accounts[0]
-    client = client_from_config(acc_cfg)  # type: ignore
+    client = CLIENT_MAP[args.exchange].from_config(acc_cfg)  # type: ignore
 
     if args.symbol in cfg.symbols:
         parser.error(

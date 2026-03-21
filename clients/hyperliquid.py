@@ -5,7 +5,7 @@ import struct
 import time
 from decimal import Decimal
 from math import floor, log10
-from typing import Any, NoReturn, Type
+from typing import Any, NoReturn, Self, Type
 
 import msgpack
 from eth_account import Account
@@ -17,6 +17,7 @@ from lib import utils
 from lib.decorators import bind_log_context, ttl_cache
 from lib.http import ApiError, AsyncHttp
 from lib.logger import logger
+from lib.models import AccountConfig
 from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 HL_API = "https://api.hyperliquid.xyz"
@@ -62,6 +63,10 @@ class HyperLiquidClient:
     @classmethod
     def __type_check(cls) -> Type[TradingClient]:
         return HyperLiquidClient  # type: ignore
+
+    @classmethod
+    def from_config(cls, cfg: AccountConfig) -> Self:
+        return cls(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name

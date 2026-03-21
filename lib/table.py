@@ -44,7 +44,7 @@ def _compute(col: Column, proxy: RowProxy):
         return _TBD
     try:
         return col.compute(proxy)
-    except (ZeroDivisionError, decimal.InvalidOperation):
+    except ZeroDivisionError, decimal.InvalidOperation:
         return None
     except Exception as e:
         logger.error(f"Error computing column '{col.name}' for row {proxy._row}: {e}")

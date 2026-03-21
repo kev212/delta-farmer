@@ -4,24 +4,10 @@ import asyncio
 
 from clients.onyx import OnyxClient
 from lib.cli import create_cli, run_app
-from lib.models import AccountConfig
 from lib.table import AutoTable, Column
 from lib.utils import gather_accs, short_addr
-from strategy import StrategyConfig, load_config
+from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
-
-
-class Config(StrategyConfig):
-    accounts: list[AccountConfig]
-
-    @classmethod
-    def load(cls, filepath: str):
-        return load_config(cls, filepath)
-
-
-def client_from_config(cfg: AccountConfig) -> OnyxClient:
-    return OnyxClient(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
-
 
 # MARK: Reports
 
@@ -65,9 +51,9 @@ async def print_info(accs: list[OnyxClient]):
 
 async def main():
     cli = await create_cli("onyx", "configs/onyx.toml", ["privkey"])
-    cfg = Config.load(cli.config)
+    cfg = StrategyConfig.load(cli.config)
 
-    accs = [(client_from_config(x), x.enabled) for x in cfg.accounts]
+    accs = [(OnyxClient.from_config(x), x.enabled) for x in cfg.accounts]
     all_accs, act_accs = [c for c, _ in accs], [c for c, e in accs if e]
 
     match cli.command:

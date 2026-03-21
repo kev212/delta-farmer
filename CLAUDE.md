@@ -2,7 +2,9 @@
 
 > Update this file after any structural change without being asked.
 
-Delta-neutral trading bot. Exchanges: Ethereal, HyperLiquid, Hyena, Nado, Omni, Onyx, Pacifica, ZeroOne (01.xyz).
+Delta-neutral trading bot. Exchanges: Ethereal, Hyena, Nado, Omni, Onyx, Pacifica, 01.xyz.
+
+> **HyperLiquid (`apps/hyperliquid.py`, `clients/hyperliquid.py`) is internal infrastructure only.** It exists as the base class for HL-family exchanges and for testing HL internals. Do not mention it as a supported exchange or suggest it to the user — HL points program is over, it has no farming purpose.
 
 ## Module map
 
@@ -17,7 +19,7 @@ Delta-neutral trading bot. Exchanges: Ethereal, HyperLiquid, Hyena, Nado, Omni, 
 | `lib/decorators.py`      | `retry`, `ttl_cache`, `bind_log_context`                                                                                                            |
 | `lib/utils.py`           | math, time, file I/O, `random_partition`, `find_safe_pair`, async helpers                                                                           |
 | `lib/telegram.py`        | notifications: `on_trade_start/stop`, `on_error`, `on_crash`                                                                                        |
-| `clients/hyperliquid.py` | `HyperLiquidClient` — base class for all HL-family exchanges; HIP-3 aware                                                                           |
+| `clients/hyperliquid.py` | `HyperLiquidClient` — **internal base class** for HL-family exchanges; HIP-3 aware. Not a supported exchange for end users.                         |
 | `clients/{exchange}.py`  | implement `TradingClient` (or extend `HyperLiquidClient`)                                                                                           |
 | `apps/{exchange}.py`     | CLI launcher per exchange                                                                                                                           |
 

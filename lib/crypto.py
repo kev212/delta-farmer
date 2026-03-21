@@ -96,6 +96,8 @@ def is_encrypted(value: str) -> bool:
 
 
 def encrypt_toml_config(filepath: str, fields: list[str]):
+    if not os.path.exists(filepath):
+        raise SystemExit(f"❌ Config file not found: {filepath}")
     with open(filepath, "r") as fp:
         data = fp.read()
 
@@ -136,6 +138,8 @@ def encrypt_toml_config(filepath: str, fields: list[str]):
 
 
 def decrypt_toml_config(filepath: str, fields: list[str]):
+    if not os.path.exists(filepath):
+        raise SystemExit(f"❌ Config file not found: {filepath}")
     with open(filepath, "r") as fp:
         data = fp.read()
 
@@ -160,16 +164,41 @@ def decrypt_toml_config(filepath: str, fields: list[str]):
     print(f"\n✓ Config decrypted: {filepath}")
 
 
+EXAMPLE_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "config.example.toml"
+)
+
+
 def config_cli_parser(subparsers: argparse._SubParsersAction, fields: list[str]):
     config_parser = subparsers.add_parser("config", help="Config file operations")
+    config_parser.add_argument(
+        "-c", "--config", default=argparse.SUPPRESS, help="Path to config file"
+    )
     config_sub = config_parser.add_subparsers(dest="config_command")
-    config_sub.add_parser("encrypt", help="Encrypt privkeys in config file")
-    config_sub.add_parser("decrypt", help="Decrypt privkeys in config file")
+    for cmd, hlp in [
+        ("encrypt", "Encrypt privkeys in config file"),
+        ("decrypt", "Decrypt privkeys in config file"),
+        ("new", "Create default config file"),
+    ]:
+        p = config_sub.add_parser(cmd, help=hlp)
+        p.add_argument("-c", "--config", default=argparse.SUPPRESS, help="Path to config file")
 
     def handle_config_command(args):
         if args.config_command is None:
             config_parser.print_help()
             return
+        elif args.config_command == "new":
+            if not os.path.exists(EXAMPLE_CONFIG_PATH):
+                raise SystemExit(f"❌ Example config not found: {EXAMPLE_CONFIG_PATH}")
+            filepath = args.config
+            if os.path.exists(filepath):
+                raise SystemExit(f"❌ Config already exists: {filepath}")
+            os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+            with open(EXAMPLE_CONFIG_PATH) as fp:
+                content = fp.read()
+            with open(filepath, "w") as fp:
+                fp.write(content)
+            print(f"✓ Config created: {filepath}")
         elif args.config_command == "encrypt":
             return encrypt_toml_config(args.config, fields)
         elif args.config_command == "decrypt":

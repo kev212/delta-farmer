@@ -1,0 +1,26 @@
+# Use config calculator to estimate volume: https://deluxe-bienenstitch-a67274.netlify.app/
+leverage = 10             # Use the lowest max across symbols (e.g. BTC=50x, ETH=25x → ≤25)
+symbols = ["BTC", "ETH"]  # Available symbols: check on the exchange
+# symbols_per_trade = 2   # Trade multiple symbols in parallel (see README)
+
+use_limit = true
+first_as_prime = true  # true = first account is always prime; false = random each cycle
+
+# trade_size_pct = 0.5                          # Size as fraction of balance
+trade_size_usd = { min = 140, max = 160 }       # Total size in USD at the leverage above (split 50% prime / 50% hedge)
+trade_duration  = { min = "15m", max = "20m" }  # How long to hold positions
+trade_cooldown  = { min = "3m",  max = "6m"  }  # Pause between trades
+
+[[accounts]]
+name = "acc1"
+privkey = "your-private-key-here"  # Run `config encrypt` after filling in keys!
+# proxy = "http://user:pass@host:port"
+
+[[accounts]]
+name = "acc2"
+privkey = "your-private-key-here"
+# enabled = false  # Exclude from trading but keep in stats
+
+# [telegram]
+# token = "bot-token"
+# chat_id = 123456789

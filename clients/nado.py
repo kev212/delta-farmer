@@ -5,7 +5,7 @@ import random
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Type
+from typing import Any, Self, Type
 
 from eth_account import Account
 from eth_account.messages import encode_typed_data
@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from lib import logger, utils
 from lib.decorators import bind_log_context, retry, ttl_cache
 from lib.http import ApiError, AsyncHttp, NotFoundError
+from lib.models import AccountConfig
 from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 APP_URL = "https://app.nado.xyz"
@@ -138,6 +139,10 @@ class NadoClient:
     @classmethod
     def __type_check(cls) -> Type[TradingClient]:
         return NadoClient
+
+    @classmethod
+    def from_config(cls, cfg: AccountConfig) -> Self:
+        return cls(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name

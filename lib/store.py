@@ -54,7 +54,7 @@ class DataStore(Generic[T]):
                     if isinstance(record, BaseModel)
                     else cast(dict, record)[self.id_key]
                 )
-            except (KeyError, AttributeError):
+            except KeyError, AttributeError:
                 logger.error(f"Record is missing id_key '{self.id_key}': {record}")
                 raise
             self.records[key] = record

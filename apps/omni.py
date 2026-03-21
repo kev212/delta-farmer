@@ -8,11 +8,10 @@ from functools import partial
 
 from clients.omni import OmniClient, OmniPoint
 from lib.cli import create_cli, run_app
-from lib.models import AccountConfig
 from lib.store import DataStore
 from lib.table import AutoTable, Column, PeriodRow, render_stats
 from lib.utils import gather_accs, parse_filter, short_addr, to_period_day, to_period_week
-from strategy import StrategyConfig, load_config
+from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
 
 # https://docs.variational.io/omni/rewards/points
@@ -20,14 +19,6 @@ from strategy.runner import close_all, print_positions, run_groups
 GENESIS = datetime(2025, 12, 17 - 6, tzinfo=timezone.utc)
 
 to_week_name = partial(to_period_week, genesis=GENESIS)
-
-
-class Config(StrategyConfig):
-    accounts: list[AccountConfig]
-
-    @classmethod
-    def load(cls, filepath: str):
-        return load_config(cls, filepath)
 
 
 # MARK: Storages
@@ -135,15 +126,11 @@ async def print_stats(accs: list[OmniClient], period="week", filter_period="all"
 # MARK: Main
 
 
-def client_from_config(cfg: AccountConfig) -> OmniClient:
-    return OmniClient(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
-
-
 async def main():
     cli = await create_cli("omni", "configs/omni.toml", ["privkey"])
-    cfg = Config.load(cli.config)
+    cfg = StrategyConfig.load(cli.config)
 
-    accs = [(client_from_config(x), x.enabled) for x in cfg.accounts]
+    accs = [(OmniClient.from_config(x), x.enabled) for x in cfg.accounts]
     all_accs, act_accs = [c for c, _ in accs], [c for c, e in accs if e]
 
     match cli.command:

@@ -10,7 +10,7 @@ from typing import Literal, Protocol, Type, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from lib.models import DurationSec, SizeRange, TgConfig, TimeRange
+from lib.models import AccountConfig, DurationSec, SizeRange, TgConfig, TimeRange
 from lib.utils import round_to_tick_size
 
 # MARK: Trading types
@@ -162,6 +162,7 @@ ConfigT = TypeVar("ConfigT", bound=BaseModel)
 class StrategyConfig(BaseModel):
     """Base config for trading strategies."""
 
+    accounts: list[AccountConfig]
     symbols: list[str] = Field(..., min_length=1)
     symbols_per_trade: int = Field(1, gt=0, le=4)
     leverage: int = Field(10, gt=0, lt=50)
@@ -190,9 +191,21 @@ class StrategyConfig(BaseModel):
                 warnings.warn("`markets` is deprecated, use `symbols` instead")
                 values["symbols"] = values.pop("markets")
             if "first_as_main" in values:
-                # warnings.warn("`first_as_main` is deprecated, use `first_as_prime` instead")
+                # warnings.warn("`first_as_main` is deprecated, use `first_as_prime` instead`)
                 values["first_as_prime"] = values.pop("first_as_main")
         return values
+
+    @model_validator(mode="after")
+    def _unique_account_names(self):
+        names = [a.name for a in self.accounts]
+        dupes = {n for n in names if names.count(n) > 1}
+        if dupes:
+            raise ValueError(f"duplicate account names: {', '.join(sorted(dupes))}")
+        return self
+
+    @classmethod
+    def load(cls, filepath: str) -> "StrategyConfig":
+        return load_config(cls, filepath)
 
 
 def load_config(config_cls: Type[ConfigT], filepath: str) -> ConfigT:

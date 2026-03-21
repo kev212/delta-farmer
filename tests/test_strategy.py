@@ -57,6 +57,7 @@ def make_position(symbol: str, side: Side, size: str, entry: str = "50000") -> P
 def make_cfg(**kw) -> StrategyConfig:
     return StrategyConfig.model_validate(
         {
+            "accounts": [{"name": "test", "privkey": "x" * 32}],
             "symbols": ["BTC"],
             "leverage": 10,
             "trade_size_usd": [100, 100],
@@ -517,7 +518,7 @@ async def test_loop_closes_all_on_startup():
     await stop_after_cleanup()
     try:
         await asyncio.wait_for(task, timeout=3)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
+    except asyncio.CancelledError, asyncio.TimeoutError:
         pass
 
     assert "cancel_all_orders" in a.calls

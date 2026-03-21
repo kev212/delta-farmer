@@ -8,11 +8,10 @@ from typing import TypeVar
 
 from clients.pacifica import PacificaClient, PacificaPoint, PacificaTrade
 from lib.cli import create_cli, run_app
-from lib.models import AccountConfig
 from lib.store import DataStore
 from lib.table import AutoTable, Column, PeriodRow, render_stats
 from lib.utils import gather_accs, parse_filter, short_addr, to_period_day, to_period_week
-from strategy import StrategyConfig, load_config
+from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
 
 # https://docs.pacifica.fi/points-program
@@ -20,14 +19,6 @@ GENESIS = datetime(2025, 9, 4, tzinfo=timezone.utc)
 
 T = TypeVar("T")
 DD = defaultdict[str, defaultdict[str, T]]
-
-
-class Config(StrategyConfig):
-    accounts: list[AccountConfig]
-
-    @classmethod
-    def load(cls, filepath: str):
-        return load_config(cls, filepath)
 
 
 # MARK: Storages
@@ -118,15 +109,11 @@ async def print_stats(accs: list[PacificaClient], period="week", filter_period="
 # MARK: Main
 
 
-def client_from_config(cfg: AccountConfig) -> PacificaClient:
-    return PacificaClient(name=cfg.name, seckey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
-
-
 async def main():
     cli = await create_cli("pacifica", "configs/pacifica.toml", ["privkey"])
-    cfg = Config.load(cli.config)
+    cfg = StrategyConfig.load(cli.config)
 
-    accs = [(client_from_config(x), x.enabled) for x in cfg.accounts]
+    accs = [(PacificaClient.from_config(x), x.enabled) for x in cfg.accounts]
     all_accs, act_accs = [c for c, _ in accs], [c for c, e in accs if e]
 
     match cli.command:

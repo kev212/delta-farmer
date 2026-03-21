@@ -8,26 +8,13 @@ from functools import partial
 
 from clients.hyena import HyenaClient
 from lib.cli import create_cli, run_app
-from lib.models import AccountConfig
 from lib.table import AutoTable, Column, PeriodRow, render_stats
 from lib.utils import gather_accs, parse_filter, short_addr, to_period_week
-from strategy import StrategyConfig, load_config
+from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
 
 GENESIS = datetime(2025, 12, 4, tzinfo=timezone.utc)
 to_week = partial(to_period_week, genesis=GENESIS)
-
-
-class Config(StrategyConfig):
-    accounts: list[AccountConfig]
-
-    @classmethod
-    def load(cls, filepath: str):
-        return load_config(cls, filepath)
-
-
-def client_from_config(cfg: AccountConfig) -> HyenaClient:
-    return HyenaClient(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
 
 
 # MARK: Reports
@@ -122,9 +109,9 @@ async def print_stats(accs: list[HyenaClient], period: str = "week", filter_peri
 
 async def main():
     cli = await create_cli("hyena", "configs/hyena.toml", ["privkey"])
-    cfg = Config.load(cli.config)
+    cfg = StrategyConfig.load(cli.config)
 
-    accs = [(client_from_config(x), x.enabled) for x in cfg.accounts]
+    accs = [(HyenaClient.from_config(x), x.enabled) for x in cfg.accounts]
     all_accs, act_accs = [c for c, _ in accs], [c for c, e in accs if e]
 
     match cli.command:

@@ -5,7 +5,7 @@ import base64
 import json
 import time
 from decimal import Decimal
-from typing import Type
+from typing import Self, Type
 
 import base58
 from cryptography.hazmat.primitives.asymmetric.ec import (
@@ -27,6 +27,7 @@ from lib import utils
 from lib.decorators import bind_log_context, ttl_cache
 from lib.http import ApiError, AsyncHttp
 from lib.logger import logger
+from lib.models import AccountConfig
 from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 # Nord (01.xyz) protobuf schema — action types, field numbers, error codes, FillMode enum:
@@ -277,6 +278,10 @@ class ZeroOneClient:
     @classmethod
     def __type_check(cls) -> Type[TradingClient]:
         return ZeroOneClient
+
+    @classmethod
+    def from_config(cls, cfg: AccountConfig) -> Self:
+        return cls(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name

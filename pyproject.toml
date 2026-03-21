@@ -1,9 +1,9 @@
 [project]
 name = "delta-farmer"
-version = "0.4.1"
+version = "0.5.0"
 description = "Automated delta-neutral trading for crypto points farming across perpetual DEXs"
 readme = "readme.md"
-requires-python = ">=3.13"
+requires-python = "==3.14.*"
 license = "MIT"
 authors = [{ name = "vladkens" }]
 keywords = ["crypto", "trading", "delta-neutral", "perpdex"]

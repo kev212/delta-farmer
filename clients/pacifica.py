@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Literal, Type, cast
+from typing import Literal, Self, Type, cast
 
 import base58
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -14,12 +14,21 @@ from solders.keypair import Keypair
 from lib import utils
 from lib.decorators import bind_log_context, retry, ttl_cache
 from lib.http import ApiError, AsyncHttp, HttpMethod
+from lib.models import AccountConfig
 from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 API_URL = "https://api.pacifica.fi/api/v1"
 APP_URL = "https://app.pacifica.fi"
 
 DEFAULT_SLIPPAGE = Decimal("0.5")
+
+
+def _load_keypair(seckey: str | list[int]) -> Keypair:
+    if isinstance(seckey, list):
+        return Keypair.from_bytes(bytes(seckey))
+    if seckey.startswith("["):
+        return Keypair.from_bytes(bytes(json.loads(seckey)))
+    return Keypair.from_bytes(base58.b58decode(seckey))
 
 
 # https://pacifica.gitbook.io/closed-alpha/api-documentation/api/rest-api/orders/get-order-history
@@ -113,8 +122,12 @@ class PacificaClient:
     def __type_check(cls) -> Type[TradingClient]:
         return PacificaClient
 
-    def __init__(self, name: str, seckey: str, proxy: str | None = None):
-        self.keypair = Keypair.from_bytes(base58.b58decode(seckey))
+    @classmethod
+    def from_config(cls, cfg: AccountConfig) -> Self:
+        return cls(name=cfg.name, seckey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
+
+    def __init__(self, name: str, seckey: str | list[int], proxy: str | None = None):
+        self.keypair = _load_keypair(seckey)
         self.name = name
         self.http = AsyncHttp(
             baseurl=API_URL,
