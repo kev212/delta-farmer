@@ -59,6 +59,11 @@ class OmniPoint(BaseModel):
     total_points: Decimal
 
 
+class OmniLeaderboardSelf(BaseModel):
+    pnl: Decimal = Decimal(0)
+    place: int | None = None
+
+
 # MARK: Client
 
 
@@ -365,24 +370,25 @@ class OmniClient:
         ref: str | None = res.get("referred_by", {}).get("code") or None
         return vol, ref
 
-    async def pnl(self) -> Decimal:
+    async def leaderboard_self(self) -> OmniLeaderboardSelf:
         params = {"limit": 20, "offset": 0, "period": "total", "ranking": "pnl"}
-        res = await self._call("GET", "/leaderboard", params=params)
+        res = await self._call("GET", "/leaderboard/v2", params=params)
         data = res.get("result", {}).get("self", {})
-        return Decimal(data.get("pnl", 0))
+        return OmniLeaderboardSelf(**data)
 
     async def profile(self) -> ProfileInfo:
         # Omni have Cloudflare protection, so do it one by one to avoid triggering anti-bot
         bal = await self.balance()
         pts = await self.points_total()
-        pnl = await self.pnl()
+        lb = await self.leaderboard_self()
         vol, ref = await self.total_volume()
 
         return ProfileInfo(
             addr=utils.short_addr(self.address),
             balance=bal,
             volume=vol,
-            pnl=pnl,
+            pnl=lb.pnl,
             points=pts.total_points,
             ref_code=ref,
+            rank=lb.place,
         )
