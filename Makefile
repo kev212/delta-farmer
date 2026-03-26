@@ -1,5 +1,8 @@
-.PHONY: prepare lint test update clean deploy stats stats-was stats-now
-p ?= all
+.PHONY: prepare lint test update clean deploy foreach info stats-was stats-now
+
+FOREACH_CLT := $(filter-out hyperliquid vault,$(basename $(notdir $(wildcard apps/*.py))))
+FOREACH_CMD := $(strip $(cmd) $(if $(filter all,$(p)),,$(p)))
+FOREACH_RUN = echo "\n── $(1) ──" && uv run -m apps.$(1) $(FOREACH_CMD) --no-banner || exit $$?
 
 prepare: lint test
 
@@ -18,17 +21,23 @@ clean:
 	rm -rf .ruff_cache .venv uv.lock .python-version
 	find . -type f -name "*.pyc" -delete
 
-stats:
-	@echo "\n── pacifica ──" && uv run -m apps.pacifica stats $(p)
-	@echo "\n── ethereal ──" && uv run -m apps.ethereal stats $(p)
-	@echo "\n── omni ──" && uv run -m apps.omni stats $(p)
-	@echo "\n── nado ──" && uv run -m apps.nado stats $(p)
+# --- Foreach ---
+
+foreach:
+	@if [ -z "$(FOREACH_CMD)" ]; then \
+		echo 'usage: make foreach cmd="<command> [args...]" [p=last|this]'; \
+		exit 2; \
+	fi
+	@$(foreach client,$(FOREACH_CLT),$(call FOREACH_RUN,$(client));)
+
+info:
+	@$(MAKE) -s foreach cmd="info"
 
 stats-was:
-	@$(MAKE) -s stats p=last
+	@$(MAKE) -s foreach cmd="stats last"
 
 stats-now:
-	@$(MAKE) -s stats p=this
+	@$(MAKE) -s foreach cmd="stats this"
 
 # --- Deploy ---
 

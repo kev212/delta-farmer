@@ -171,17 +171,13 @@ EXAMPLE_CONFIG_PATH = os.path.join(
 
 def config_cli_parser(subparsers: argparse._SubParsersAction, fields: list[str]):
     config_parser = subparsers.add_parser("config", help="Config file operations")
-    config_parser.add_argument(
-        "-c", "--config", default=argparse.SUPPRESS, help="Path to config file"
-    )
     config_sub = config_parser.add_subparsers(dest="config_command")
     for cmd, hlp in [
         ("encrypt", "Encrypt privkeys in config file"),
         ("decrypt", "Decrypt privkeys in config file"),
         ("new", "Create default config file"),
     ]:
-        p = config_sub.add_parser(cmd, help=hlp)
-        p.add_argument("-c", "--config", default=argparse.SUPPRESS, help="Path to config file")
+        config_sub.add_parser(cmd, help=hlp)
 
     def handle_config_command(args):
         if args.config_command is None:

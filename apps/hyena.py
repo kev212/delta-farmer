@@ -29,28 +29,20 @@ async def print_info(accs: list[HyenaClient]):
         Column("", justify="left"),
         Column("Account", justify="left"),
         Column("Address", justify="left"),
+        Column("Volume", "{:,.0f}", total=sum),
+        Column("Burn", "{:,.2f}", total=sum),
+        Column("Points", "{:,.0f}", total=sum),
+        Column("P/Price", "{:,.4f}", compute=lambda r: r["Burn"] / r["Points"]),
         Column("Balance", "{:,.2f}", total=sum),
-        Column("enaxPts", "{:,.0f}", total=sum),
-        Column("Sats", "{:,.0f}", total=sum),
-        Column("Rank", justify="left"),
-        Column("Claimable", "{:,.2f}", total=sum),
     )
 
     async def row(acc: HyenaClient):
         await acc.warmup()
-        bal, rewards = await asyncio.gather(acc.balance(), acc.rewards())
-        addr = short_addr(acc.address)
-        r = rewards.rank
-        return (
-            "✓",
-            acc.name,
-            addr,
-            bal,
-            rewards.balance.enaxPoints,
-            rewards.balance.sats,
-            f"{r.tier} ({r.percentile:.1f}%)",
-            rewards.availableToClaim,
-        )
+        p = await acc.profile() if await acc.registered() else None
+        a = short_addr(acc.address)
+        if not p:
+            return ("✗", acc.name, a, 0, 0, 0, 0)
+        return ("✓", acc.name, a, p.volume, -p.pnl, p.points, p.balance)
 
     for r in await gather_accs(accs, row):
         tbl.add_row(*r)
@@ -59,9 +51,8 @@ async def print_info(accs: list[HyenaClient]):
 
 
 async def _fetch_fills(acc: HyenaClient) -> list[dict]:
-    rep = await acc.http.request(
-        "POST", "/info", json={"type": "userFills", "user": acc.address, "aggregateByTime": True}
-    )
+    pld = {"type": "userFills", "user": acc.address, "aggregateByTime": True}
+    rep = await acc.http.request("POST", "/info", json=pld)
     return rep.json() if rep.ok else []
 
 
@@ -105,7 +96,7 @@ async def print_stats(accs: list[HyenaClient], period: str = "week", filter_peri
             rows.append(PeriodRow(name, len(fills), vol, -pnl, points, fee))
         periods_data[pk] = rows
 
-    render_stats(periods_data, periods_to_show)
+    render_stats(periods_data, periods_to_show, points_fmt="{:,.0f}", pprice_fmt="{:,.4f}")
 
 
 # MARK: Main

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Coroutine
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,35 @@ class HelpFormatter(argparse.HelpFormatter):
             if getattr(subaction, "help", None) == argparse.SUPPRESS:
                 continue
             yield subaction
+
+
+def cli_anyarg(
+    parser: argparse.ArgumentParser,
+    *flags: str,
+    default: Any = argparse.SUPPRESS,
+    action: str | None = None,
+    help: str | None = None,
+) -> None:
+    option_strings = set(flags)
+    parser_default = default
+
+    def _apply(target: argparse.ArgumentParser, *, is_root: bool) -> None:
+        if not any(
+            option_strings.intersection(existing.option_strings) for existing in target._actions
+        ):
+            default_value = parser_default if is_root else argparse.SUPPRESS
+            if action is None:
+                target.add_argument(*flags, default=default_value, help=help)
+            else:
+                target.add_argument(*flags, default=default_value, action=action, help=help)
+
+        for existing in target._actions:
+            if not isinstance(existing, argparse._SubParsersAction):
+                continue
+            for subparser in existing.choices.values():
+                _apply(subparser, is_root=False)
+
+    _apply(parser, is_root=True)
 
 
 def _get_version() -> tuple[str, bool]:
@@ -88,26 +118,17 @@ async def _handle_tgtest(name: str) -> None:
 
 
 async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argparse.Namespace:
-    eprint(f":: delta-farmer {VERSION}| https://x.com/uid127 | https://t.me/eazyrekt")
-
     cli = argparse.ArgumentParser(prog=name, formatter_class=HelpFormatter)
-    cli.add_argument("-c", "--config", default=config_path, help="Path to config file")
 
     sub = cli.add_subparsers(dest="command")
+    sub.add_parser("trade", help="Run trading manager")
+    sub.add_parser("close", help="Close all positions")
+    sub.add_parser("positions", help="Show active positions")
+    sub.add_parser("info", help="Show accounts info")
+    sub.add_parser("clean", help="Delete cached data")
+    sub.add_parser("tgtest", help=argparse.SUPPRESS)
 
-    def _sub(name: str, **kw) -> argparse.ArgumentParser:
-        p = sub.add_parser(name, **kw)
-        p.add_argument("-c", "--config", default=argparse.SUPPRESS, help="Path to config file")
-        return p
-
-    _sub("trade", help="Run trading manager")
-    _sub("close", help="Close all positions")
-    _sub("positions", help="Show active positions")
-    _sub("info", help="Show accounts info")
-    _sub("clean", help="Delete cached data")
-    _sub("tgtest", help=argparse.SUPPRESS)
-
-    stats_parser = _sub("stats", help="Show trading stats")
+    stats_parser = sub.add_parser("stats", help="Show trading stats")
     stats_parser.add_argument(
         "filter", nargs="?", default="all", help="Period filter (all/this/last/W05)"
     )
@@ -117,16 +138,16 @@ async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argp
 
     all_fields = list(sec_fields) + ([] if "token" in sec_fields else ["token"])
     handle_config = config_cli_parser(sub, fields=all_fields)
-    sub.metavar = (
-        "{"
-        + ",".join(
-            action.dest
-            for action in sub._get_subactions()
-            if getattr(action, "help", None) != argparse.SUPPRESS
-        )
-        + "}"
-    )
+
+    cli_anyarg(cli, "-c", "--config", default=config_path, help="Path to config file")
+    cli_anyarg(cli, "--no-banner", default=False, action="store_true", help=argparse.SUPPRESS)
+
+    acts = [a for a in sub._get_subactions() if getattr(a, "help", None) != argparse.SUPPRESS]
+    sub.metavar = "{" + ",".join(a.dest for a in acts) + "}"
     args = cli.parse_args()
+
+    if not args.no_banner:
+        eprint(f":: delta-farmer {VERSION}| https://x.com/uid127 | https://t.me/eazyrekt")
 
     telemetry.init(exchange=name, command=args.command or "", version=VERSION, release=IS_RELEASE)
     telemetry.track("$pageview", {"$current_url": f"cli://delta-farmer/{name}/{args.command}"})

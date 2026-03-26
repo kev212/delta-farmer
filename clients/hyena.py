@@ -37,6 +37,13 @@ class HyenaHistoryItem(BaseModel):
     enaxPoints: Decimal
 
 
+class HyenaFill(BaseModel):
+    coin: str
+    px: Decimal
+    sz: Decimal
+    closedPnl: Decimal = Decimal(0)
+
+
 class HyenaRewards(BaseModel):
     balance: HyenaRewardBalance
     rank: HyenaRank
@@ -162,27 +169,24 @@ class HyenaClient(HyperLiquidClient):
         data = await self._authed_get("/api/hyena/payouts/total")
         return HyenaPayoutsTotal.model_validate(data)
 
+    async def fills(self) -> list[HyenaFill]:
+        data = await self._info(type="userFills", user=self.address, aggregateByTime=True)
+        return [HyenaFill.model_validate(x) for x in data]
+
     # MARK: Profile
 
     async def profile(self) -> ProfileInfo:
-        bal, rewards, portfolio = await asyncio.gather(
+        bal, rewards, fills = await asyncio.gather(
             self.balance(),
             self.rewards(),
-            self._info(type="portfolio", user=self.address),
+            self.fills(),
         )
-        volume = Decimal(0)
-        pnl = Decimal(0)
-        for period_name, period_data in portfolio:
-            if period_name == "perpAllTime":
-                volume = Decimal(str(period_data.get("vlm", 0)))
-                history = period_data.get("pnlHistory", [])
-                pnl = Decimal(str(history[-1][1])) if history else Decimal(0)
-                break
+        # HyperLiquid /info portfolio is overall HIP-3 PnL, not Hyena-only.
+        # Use Hyena trades data so `info` matches Hyena `stats` burn reporting.
+        hyena_fills = [f for f in fills if f.coin.startswith("hyna:")]
+        volume = sum((f.px * f.sz for f in hyena_fills), Decimal(0))
+        pnl = sum((f.closedPnl for f in hyena_fills), Decimal(0))
 
-        return ProfileInfo(
-            addr=utils.short_addr(self.address),
-            balance=bal,
-            volume=volume,
-            pnl=pnl,
-            points=rewards.balance.enaxPoints,
-        )
+        addr = utils.short_addr(self.address)
+        epts = rewards.balance.enaxPoints
+        return ProfileInfo(addr=addr, balance=bal, volume=volume, pnl=pnl, points=epts)

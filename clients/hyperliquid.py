@@ -441,10 +441,5 @@ class HyperLiquidClient:
                 pnl = Decimal(str(history[-1][1])) if history else Decimal(0)
                 break
 
-        return ProfileInfo(
-            addr=utils.short_addr(self.address),
-            balance=bal,
-            volume=volume,
-            pnl=pnl,
-            points=Decimal(0),
-        )
+        addr = utils.short_addr(self.address)
+        return ProfileInfo(addr=addr, balance=bal, volume=volume, pnl=pnl, points=Decimal(0))

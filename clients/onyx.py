@@ -44,7 +44,6 @@ class OnyxAccountSummary(BaseModel):
 
 
 class OnyxUserInfo(BaseModel):
-    walletAddress: str
     boostedWalletAddress: str | None = None
     eoaAddress: str | None = None
     accountSummary: OnyxAccountSummary = OnyxAccountSummary()
@@ -160,10 +159,9 @@ class OnyxClient(HyperLiquidClient):
     async def profile(self) -> ProfileInfo:
         bal, info = await asyncio.gather(self.balance(), self.user_info())
         s = info.accountSummary
+
+        # Keep Onyx aligned with other apps: `info` shows burn as `-pnl`.
+        addr = utils.short_addr(self.address)
         return ProfileInfo(
-            addr=utils.short_addr(self.address),
-            balance=bal,
-            volume=s.onyxVolume,
-            pnl=s.totalPnl,
-            points=Decimal(0),
+            addr=addr, balance=bal, volume=s.onyxVolume, pnl=s.totalPnl, points=Decimal(0)
         )

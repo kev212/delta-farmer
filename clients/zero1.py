@@ -466,7 +466,6 @@ class ZeroOneClient:
             batch = data.get("items", [])
             records.extend(batch)
             cursor = data.get("nextStartInclusive")
-            logger.debug(f"Fetched for {path} - {len(batch)} items, next cursor: {cursor}")
             if not cursor or len(batch) < page_size:
                 break
 
