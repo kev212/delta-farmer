@@ -61,7 +61,6 @@ You control the size, timing, leverage, and which exchange to run on. The bot ha
 Open **Terminal** (`Cmd + Space` → type "Terminal" → Enter) and run:
 
 ```bash
-# Install Git (skip if you already have it)
 xcode-select --install
 ```
 
@@ -78,7 +77,6 @@ Close and reopen Terminal so the `uv` command becomes available.
 Open **PowerShell** (`Win + S` → type "PowerShell" → Enter) and run:
 
 ```powershell
-# Install Git
 winget install --id Git.Git -e --source winget
 ```
 

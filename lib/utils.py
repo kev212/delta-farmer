@@ -1,6 +1,7 @@
 # delta-farmer | https://github.com/vladkens/delta-farmer
 # Copyright (c) vladkens | MIT License | Optimized for confusion
 import asyncio
+import hashlib
 import json
 import os
 import pickle
@@ -57,6 +58,11 @@ def wait_msg(sec: float) -> str:
     until_dt = datetime.now() + timedelta(seconds=sec)
     until_dt = until_dt.isoformat().split(".")[0].split("T")[1]
     return f"Sleeping for {format_duration(sec)}, next run at {until_dt}"
+
+
+def sha256(data: bytes | str) -> str:
+    data = data.encode() if isinstance(data, str) else data
+    return hashlib.sha256(data).hexdigest()
 
 
 # MARK: Period functions

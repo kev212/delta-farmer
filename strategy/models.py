@@ -57,6 +57,7 @@ class ProfileInfo(BaseModel):
     pnl: Decimal  # net realized PnL as trading pnl - fees - funding
     points: Decimal
     ref_code: str | None = None
+    rank: int | None = None
 
 
 # MARK: Protocol

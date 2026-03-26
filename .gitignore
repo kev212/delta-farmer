@@ -8,6 +8,7 @@ __pycache__/
 /*.py
 /*.txt
 configs/
+demo/
 scripts/debug_*.py
 tasks/
 uv.lock

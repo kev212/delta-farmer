@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Self, Type
 
@@ -22,12 +23,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_account.signers.local import LocalAccount
+from pydantic import BaseModel
 
 from lib import utils
 from lib.decorators import bind_log_context, ttl_cache
-from lib.http import ApiError, AsyncHttp
+from lib.http import ApiError, AsyncHttp, HttpMethod, NotFoundError
 from lib.logger import logger
 from lib.models import AccountConfig
+from lib.unwaf import ensure_unwaf
 from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingClient
 
 # Nord (01.xyz) protobuf schema — action types, field numbers, error codes, FillMode enum:
@@ -39,6 +42,11 @@ NORD_API = "https://zo-mainnet.n1.xyz"
 TURNKEY_API = "https://api.turnkey.com"
 TURNKEY_AUTHPROXY = "https://authproxy.turnkey.com"
 TURNKEY_AUTHPROXY_CONFIG_ID = "5ded06a7-4de9-40ba-8574-8716f865cb02"
+
+ZERO1_APP = "https://01.xyz"
+ZERO1_GENESIS = datetime(2026, 2, 3, tzinfo=timezone.utc)  # week 1 start (Tuesday)
+_POINTS_AUTH_ACTION = "40b744e1ca27621017264202a7958cb1b7b2dd7995"
+_POINTS_DEPLOYMENT_ID = "dpl_9cN1YHKTLJ4EkJ1SoxaV9ns7pT88"
 
 
 # MARK: Protobuf codec (minimal, hand-rolled for Nord actions)
@@ -208,12 +216,9 @@ class ZeroOneTurnkey:
 
     @ttl_cache(86400)
     async def _get_org_id(self) -> str:
-        rep = await self._authproxy.request(
-            "POST",
-            "/v1/account",
-            json={"filterType": "PUBLIC_KEY", "filterValue": self._evm_pubkey_hex},
-            headers={"x-auth-proxy-config-id": TURNKEY_AUTHPROXY_CONFIG_ID},
-        )
+        pld = {"filterType": "PUBLIC_KEY", "filterValue": self._evm_pubkey_hex}
+        hdr = {"x-auth-proxy-config-id": TURNKEY_AUTHPROXY_CONFIG_ID}
+        rep = await self._authproxy.request("POST", "/v1/account", json=pld, headers=hdr)
         if not rep.ok:
             raise ApiError("Turnkey account lookup failed", rep)
         data = rep.json()
@@ -271,6 +276,11 @@ class ZeroOneTurnkey:
 # MARK: Client
 
 
+class ZeroOnePoint(BaseModel):
+    start_window: datetime
+    points: Decimal
+
+
 @bind_log_context
 class ZeroOneClient:
     exchange = "zero1"
@@ -292,28 +302,35 @@ class ZeroOneClient:
         self._session_id: int | None = None
         self._account_id: int | None = None
         self._login_lock = asyncio.Lock()
-        self.http = AsyncHttp(baseurl=NORD_API, headers={}, proxy=proxy)
+        self.http = AsyncHttp(
+            baseurl=NORD_API,
+            headers={"Referer": f"{ZERO1_APP}/", "Origin": ZERO1_APP},
+            proxy=proxy,
+            cookies_file=f".cache/zero1_{utils.short_addr(self.address)}_http.pkl",
+        )
+
+    async def _call(self, method: HttpMethod, path: str, **kwargs):
+        rep = await self.http.request(method, path, **kwargs)
+        if rep.status_code == 404:
+            raise NotFoundError("Not found", rep)
+        if not rep.ok:
+            raise ApiError("API error", rep)
+        return rep.json()
 
     # MARK: Auth
 
     async def _get_server_ts(self) -> int:
-        rep = await self.http.request("GET", "/timestamp")
-        if not rep.ok:
-            raise ApiError("Nord timestamp failed", rep)
-        return int(rep.json())
+        return int(await self._call("GET", "/timestamp"))
 
     async def _login(self) -> None:
         solana_addr = await self._turnkey.login()
         # logger.info(f"Turnkey Solana address: {solana_addr}")
 
-        rep = await self.http.request("GET", f"/user/{solana_addr}")
-        if not rep.ok or not rep.json().get("accountIds"):
+        data = await self._call("GET", f"/user/{solana_addr}")
+        if not data.get("accountIds"):
             addr = utils.short_addr(solana_addr)
-            raise ApiError(
-                f"Nord account not found for {addr} — connect wallet on 01.xyz first",
-                rep if not rep.ok else None,
-            )
-        account_ids = rep.json()["accountIds"]
+            raise ApiError(f"Nord account not found for {addr} — connect wallet on 01.xyz first")
+        account_ids = data["accountIds"]
         self._account_id = account_ids[0]
 
         ts = await self._get_server_ts()
@@ -384,10 +401,7 @@ class ZeroOneClient:
 
     @ttl_cache(3600)
     async def _meta(self) -> dict:
-        rep = await self.http.request("GET", "/info")
-        if not rep.ok:
-            raise ApiError("Nord /info failed", rep)
-        return rep.json()
+        return await self._call("GET", "/info")
 
     async def _market(self, symbol: str) -> dict:
         info = await self._meta()
@@ -418,10 +432,7 @@ class ZeroOneClient:
     @ttl_cache(5)
     async def get_bbo(self, symbol: str) -> tuple[Decimal, Decimal]:
         m = await self._market(symbol)
-        rep = await self.http.request("GET", f"/market/{m['marketId']}/orderbook")
-        if not rep.ok:
-            raise ApiError("Nord orderbook failed", rep)
-        ob = rep.json()
+        ob = await self._call("GET", f"/market/{m['marketId']}/orderbook")
         bid = Decimal(str(ob["bids"][0][0])) if ob.get("bids") else Decimal(0)
         ask = Decimal(str(ob["asks"][0][0])) if ob.get("asks") else Decimal(0)
         return bid, ask
@@ -430,14 +441,49 @@ class ZeroOneClient:
         bid, ask = await self.get_bbo(symbol)
         return (bid + ask) / 2
 
+    # MARK: History
+
+    async def paged(self, path: str, since: datetime | None = None) -> list[dict]:
+        page_size = 255
+        records: list[dict] = []
+        cursor: str | None = None
+
+        while True:
+            params = {"pageSize": str(page_size)}
+            if since:
+                params["since"] = since.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            if cursor:
+                params["startExclusive"] = cursor
+
+            rep = await self.http.request("GET", path, params=params)
+            if not rep.ok:
+                logger.warning(
+                    f"Paged request failed: {path} {params} {rep.status_code} {rep.text}"
+                )
+                break
+
+            data = rep.json()
+            batch = data.get("items", [])
+            records.extend(batch)
+            cursor = data.get("nextStartInclusive")
+            logger.debug(f"Fetched for {path} - {len(batch)} items, next cursor: {cursor}")
+            if not cursor or len(batch) < page_size:
+                break
+
+        fields = ["actionId", "marketId", "tradeId", "orderId", "time"]
+        for r in records:
+            values = [str(r[x]) for x in fields if x in r]
+            assert len(values) > 0, f"No ID fields found in record: {r}"
+            r["uid"] = utils.sha256("-".join(values))
+
+        return records
+
     # MARK: Account
 
     async def balance(self) -> Decimal:
         _, acc_id = await self._ensure_session()
-        rep = await self.http.request("GET", f"/account/{acc_id}")
-        if not rep.ok:
-            raise ApiError("Nord account failed", rep)
-        for bal in rep.json().get("balances", []):
+        data = await self._call("GET", f"/account/{acc_id}")
+        for bal in data.get("balances", []):
             if bal["token"] == "USDC":
                 return Decimal(str(bal["amount"]))
         return Decimal(0)
@@ -452,15 +498,13 @@ class ZeroOneClient:
 
     async def positions(self) -> list[Position]:
         _, acc_id = await self._ensure_session()
-        rep = await self.http.request("GET", f"/account/{acc_id}")
-        if not rep.ok:
-            raise ApiError("Nord account failed", rep)
+        data = await self._call("GET", f"/account/{acc_id}")
 
         info = await self._meta()
         market_map = {m["marketId"]: m for m in info.get("markets", [])}
 
         result = []
-        for pos in rep.json().get("positions", []):
+        for pos in data.get("positions", []):
             perp = pos.get("perp")
             if not perp:
                 continue
@@ -590,10 +634,10 @@ class ZeroOneClient:
         return await self._place_order(symbol, side, qty, price, 0, reduce_only)  # LIMIT
 
     async def get_order(self, order_id: str) -> Order | None:
-        rep = await self.http.request("GET", f"/order/{order_id}")
-        if not rep.ok:
+        try:
+            o = await self._call("GET", f"/order/{order_id}")
+        except NotFoundError:
             return None
-        o = rep.json()
         symbol = o.get("marketSymbol", "?").removesuffix("USD")
         raw_size = Decimal(str(o.get("placedSize") or 0))
         filled = Decimal(str(o.get("filledSize") or 0))
@@ -631,10 +675,7 @@ class ZeroOneClient:
 
     async def cancel_all_orders(self) -> int:
         _, acc_id = await self._ensure_session()
-        rep = await self.http.request("GET", f"/account/{acc_id}/orders", params={"pageSize": 100})
-        if not rep.ok:
-            return 0
-        data = rep.json()
+        data = await self._call("GET", f"/account/{acc_id}/orders", params={"pageSize": 100})
         items = data.get("items", data) if isinstance(data, dict) else data
         count = 0
         for o in items:
@@ -656,37 +697,69 @@ class ZeroOneClient:
 
     # MARK: Profile
 
+    @ttl_cache(86400)
+    async def _ensure_points_auth(self, solana_addr: str, acc_id: int) -> None:
+        await ensure_unwaf(self.http, f"{ZERO1_APP}/")
+        hdr = {"next-action": _POINTS_AUTH_ACTION, "x-deployment-id": _POINTS_DEPLOYMENT_ID}
+        pld = {"address": solana_addr, "accountId": acc_id, "network": "mainnet", "sessionId": None}
+        await self.http.request("POST", f"{ZERO1_APP}/points", json=[pld], headers=hdr)
+
+    async def _fetch_points(self, solana_addr: str, acc_id: int) -> dict:
+        await self._ensure_points_auth(solana_addr, acc_id)
+        url = f"{ZERO1_APP}/api/points?walletAddress={solana_addr}"
+        rep = await self.http.request("GET", url)
+        return rep.json()
+
+    async def _points(self, solana_addr: str, acc_id: int) -> tuple[Decimal, int | None]:
+        data = await self._fetch_points(solana_addr, acc_id)
+        lb = data.get("leaderboardData", {})
+        return Decimal(str(lb.get("points", 0))), lb.get("rank")
+
+    async def points_history(self) -> list[ZeroOnePoint]:
+        _, acc_id = await self._ensure_session()
+        solana_addr = await self._turnkey.login()
+        data = await self._fetch_points(solana_addr, acc_id)
+        result = []
+        for d in data.get("data", []):
+            n = int(d["stage"].split("_")[1])
+            start = ZERO1_GENESIS + timedelta(weeks=n - 1)
+            result.append(ZeroOnePoint(start_window=start, points=Decimal(str(d["points"]))))
+        return result
+
+    async def _total_volume(self, acc_id: int) -> Decimal:
+        pld = {"accountId": acc_id, "since": "2020-01-01T00:00:00Z"}
+        res = await self._call("GET", "/account/volume", params=pld)
+        return sum((Decimal(str(e.get("volumeQuote", 0))) for e in res), Decimal(0))
+
+    async def _total_pnl(self, acc_id: int) -> Decimal:
+        pnl_data, vol_data = await asyncio.gather(
+            self._call("GET", f"{ZERO1_APP}/api/calendar/{acc_id}"),
+            self._call("GET", f"{ZERO1_APP}/api/volume-calendar/{acc_id}"),
+        )
+        pnl_days = pnl_data.get("days", {})
+        fee_days = vol_data.get("days", {})
+        all_days = set(pnl_days) | set(fee_days)
+        total = Decimal(0)
+        for day in all_days:
+            d = pnl_days.get(day, {})
+            total += Decimal(str(d.get("tradingPnl", 0)))
+            total += Decimal(str(d.get("fundingPnl", 0)))
+            total -= Decimal(str(fee_days.get(day, {}).get("totalFees", 0)))
+        return total
+
     async def profile(self) -> ProfileInfo:
         _, acc_id = await self._ensure_session()
-        rep = await self.http.request("GET", f"/account/{acc_id}")
-        if not rep.ok:
-            raise ApiError("Nord account failed", rep)
-        account = rep.json()
+        solana_addr = await self._turnkey.login()
+        account, vol, pnl, (pts, rank) = await asyncio.gather(
+            self._call("GET", f"/account/{acc_id}"),
+            self._total_volume(acc_id),
+            self._total_pnl(acc_id),
+            self._points(solana_addr, acc_id),
+        )
         bal = Decimal(0)
         for b in account.get("balances", []):
             if b["token"] == "USDC":
                 bal = Decimal(str(b["amount"]))
 
-        pnl = Decimal(0)
-
-        vol_rep = await self.http.request(
-            "GET",
-            "/account/volume",
-            params={"accountId": acc_id, "since": "2020-01-01T00:00:00Z"},
-        )
-        vol = Decimal(0)
-        if vol_rep.ok:
-            for entry in vol_rep.json():
-                vol += Decimal(str(entry.get("volumeQuote", 0)))
-
-        pnl_rep = await self.http.request("GET", f"https://01.xyz/api/pnl-totals/{acc_id}")
-        if pnl_rep.ok:
-            pnl = Decimal(str(pnl_rep.json().get("totalPnl", 0)))
-
-        return ProfileInfo(
-            addr=utils.short_addr(self.address),
-            balance=bal,
-            volume=vol,
-            pnl=pnl,
-            points=Decimal(0),
-        )
+        addr = utils.short_addr(self.address)
+        return ProfileInfo(addr=addr, balance=bal, volume=vol, pnl=pnl, points=pts, rank=rank)
