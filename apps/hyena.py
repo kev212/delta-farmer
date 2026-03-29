@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import partial
+from typing import TypeVar
 
 from clients.hyena import HyenaClient
 from lib.cli import create_cli, run_app
@@ -13,6 +14,9 @@ from lib.table import AutoTable, Column, PeriodRow, render_stats
 from lib.utils import gather_accs, parse_filter, short_addr, to_period_week
 from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
+
+T = TypeVar("T")
+DD = defaultdict[str, defaultdict[str, T]]
 
 GENESIS = datetime(2025, 12, 4, tzinfo=timezone.utc)
 to_week = partial(to_period_week, genesis=GENESIS)
@@ -58,17 +62,38 @@ async def sync_fills(acc: HyenaClient, ttl: int) -> list[dict]:
     return store.get_all()
 
 
+async def sync_rewards(acc: HyenaClient, ttl: int) -> list[dict]:
+    store_path = f".cache/hyena_{short_addr(acc.address)}_rewards.pkl"
+    store = DataStore(store_path, id_key="id")
+
+    async def fetch(_since):
+        rewards = await acc.rewards()
+        return [
+            {
+                "id": h.id,
+                "enaxPoints": h.enaxPoints,
+                "period": to_week(
+                    GENESIS + timedelta(weeks=int(h.id.removeprefix("reward-week-")) - 1)
+                ),
+            }
+            for h in rewards.history
+        ]
+
+    await store.sync(fetch, ttl_sec=ttl)
+    return store.get_all()
+
+
 async def print_stats(
     accs: list[HyenaClient], period: str = "week", filter_period: str = "all", force: bool = False
 ):
     ttl = 0 if force else 3600
     fills_list, rewards_list = await asyncio.gather(
         gather_accs(accs, lambda acc: sync_fills(acc, ttl)),
-        gather_accs(accs, lambda acc: acc.rewards()),
+        gather_accs(accs, lambda acc: sync_rewards(acc, ttl)),
     )
 
-    gtrades: defaultdict[str, defaultdict[str, list]] = defaultdict(lambda: defaultdict(list))
-    gpoints: defaultdict[str, defaultdict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    gtrades: DD[list[dict]] = defaultdict(lambda: defaultdict(list))
+    gpoints: DD[Decimal] = defaultdict(lambda: defaultdict(Decimal))
 
     for acc, fills in zip(accs, fills_list):
         for fill in fills:
@@ -76,10 +101,8 @@ async def print_stats(
             gtrades[to_week(dt)][acc.name].append(fill)
 
     for acc, rewards in zip(accs, rewards_list):
-        for h in rewards.history:
-            n = int(h.id.removeprefix("reward-week-"))
-            wk = to_week(GENESIS + timedelta(weeks=n - 1))
-            gpoints[wk][acc.name] += h.enaxPoints
+        for h in rewards:
+            gpoints[h["period"]][acc.name] += Decimal(str(h["enaxPoints"]))
 
     all_periods = sorted(gtrades.keys() | gpoints.keys())
     periods_to_show = parse_filter(filter_period, all_periods)

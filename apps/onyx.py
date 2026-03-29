@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import partial
+from typing import TypeVar
 
 from clients.onyx import OnyxClient
 from lib.cli import create_cli, run_app
@@ -12,6 +13,9 @@ from lib.table import AutoTable, Column, PeriodRow, render_stats
 from lib.utils import gather_accs, parse_filter, short_addr, to_period_day, to_period_week
 from strategy import StrategyConfig
 from strategy.runner import close_all, print_positions, run_groups
+
+T = TypeVar("T")
+DD = defaultdict[str, defaultdict[str, T]]
 
 GENESIS = datetime(2026, 3, 1, tzinfo=timezone.utc)
 to_week = partial(to_period_week, genesis=GENESIS)
@@ -63,7 +67,7 @@ async def print_stats(
     fills_list = await gather_accs(accs, lambda acc: sync_fills(acc, ttl))
 
     period_fn = to_period_day if period == "day" else to_week
-    gtrades: defaultdict[str, defaultdict[str, list]] = defaultdict(lambda: defaultdict(list))
+    gtrades: DD[list[dict]] = defaultdict(lambda: defaultdict(list))
 
     for acc, fills in zip(accs, fills_list):
         for fill in fills:

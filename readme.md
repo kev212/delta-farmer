@@ -416,6 +416,37 @@ Set `DF_TELEMETRY=0` to opt out completely.
 
 ---
 
+## Weekly Report
+
+Sync stats for all exchanges first, then run the report:
+
+```bash
+uv run apps/<app>.py stats --force   # refresh each exchange
+
+uv run scripts/weekly.py             # all exchanges, latest week
+uv run scripts/weekly.py -1          # one week back
+uv run scripts/weekly.py -e Hyena    # one exchange, all periods
+uv run scripts/weekly.py --burn      # burn only, all exchanges over time
+```
+
+---
+
+## Known Issues
+
+### SSL certificate error on macOS
+
+```
+urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]>
+```
+
+Caused by a bug in `curl-cffi` v0.14. Fix:
+
+```bash
+uv add curl-cffi==0.15.0b4 --prerelease allow && uv sync
+```
+
+---
+
 ## Risk Disclaimer
 
 **USE AT YOUR OWN RISK**

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0 — 2026-03-29
+
+### New
+
+- **01.xyz** — points balance, rank, and trade history now shown in `info` and `stats`
+- **Hyena and Onyx stats** — Onyx now has a `stats` command; fills are cached locally on both exchanges
+- **Weekly report script** — `scripts/weekly.py` aggregates volume, burn, and points across all exchanges from local cache
+
+### Fixes
+
+- Nado: balance now correctly sums USDT + USDC deposits
+- Nado: trade close PnL was wrong due to Nado keeping closed positions as zero-size entries temporarily
+- Nado: margin check was too conservative, causing false "insufficient margin" rejections
+- Omni: switched to leaderboard v2 — points rank now visible in `info`
+
+[v0.5.1...v0.6.0](https://github.com/vladkens/delta-farmer/compare/v0.5.1...v0.6.0)
+
+---
+
 ## v0.5.1 — 2026-03-22
 
 ### Fixes
