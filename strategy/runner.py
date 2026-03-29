@@ -12,7 +12,7 @@ from rich.table import Table
 
 from lib import telegram as tg
 from lib import telemetry, utils
-from lib.http import FatalError
+from lib.errors import AppError
 from lib.logger import logger
 
 from .delta import DeltaStrategy
@@ -153,12 +153,12 @@ async def _warmup_all(accs: Sequence[TradingClient]) -> None:
     rs = await asyncio.gather(*[a.warmup() for a in accs], return_exceptions=True)
     failed = [a.name for a, r in zip(accs, rs) if isinstance(r, Exception)]
     if failed:
-        raise FatalError(f"Warmup failed: {', '.join(failed)}")
+        raise AppError(f"Warmup failed: {', '.join(failed)}")
 
     rs = await asyncio.gather(*[a.registered() for a in accs], return_exceptions=True)
     failed = [a.name for a, r in zip(accs, rs) if isinstance(r, Exception) or r is False]
     if failed:
-        raise FatalError(f"Not registered: {', '.join(failed)}")
+        raise AppError(f"Not registered: {', '.join(failed)}")
 
 
 async def _run_group(
@@ -179,24 +179,24 @@ def _check_cfg(cfg: StrategyConfig, accs: Sequence[TradingClient]):
     n = len(accs)
 
     if cfg.trade_size_usd is None and cfg.trade_size_pct is None:
-        raise FatalError("either trade_size_usd or trade_size_pct must be specified in config")
+        raise AppError("either trade_size_usd or trade_size_pct must be specified in config")
     if cfg.trade_size_usd is not None and cfg.trade_size_pct is not None:
-        raise FatalError("trade_size_usd and trade_size_pct are mutually exclusive")
+        raise AppError("trade_size_usd and trade_size_pct are mutually exclusive")
 
     if n < 2:
-        raise FatalError(f"At least 2 accounts are required for trading, got {n}")
+        raise AppError(f"At least 2 accounts are required for trading, got {n}")
 
     if cfg.symbols_per_trade > 1 and len(cfg.symbols) != cfg.symbols_per_trade:
-        raise FatalError(
+        raise AppError(
             f"symbols_per_trade={cfg.symbols_per_trade} requires exactly "
             f"{cfg.symbols_per_trade} symbols, got {len(cfg.symbols)}"
         )
 
     if cfg.group_size is None and n > 5:
-        raise FatalError("Single-group mode supports up to 5 enabled accounts")
+        raise AppError("Single-group mode supports up to 5 enabled accounts")
 
     if cfg.group_size is not None and n % cfg.group_size != 0:
-        raise FatalError(f"{n} enabled accounts is not divisible by group_size={cfg.group_size}")
+        raise AppError(f"{n} enabled accounts is not divisible by group_size={cfg.group_size}")
 
     if cfg.group_size is not None and cfg.first_as_prime:
         cfg.first_as_prime = False

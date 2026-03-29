@@ -9,7 +9,7 @@ from curl_cffi.requests.session import HttpMethod  # noqa: F401
 from .logger import logger
 from .utils import pickle_dump, pickle_load
 
-__all__ = ["ApiError", "NotFoundError", "FatalError", "AsyncHttp", "HttpMethod", "parse_proxy"]
+__all__ = ["ApiError", "NotFoundError", "AsyncHttp", "HttpMethod", "parse_proxy"]
 
 
 class ApiError(Exception):
@@ -28,10 +28,6 @@ class ApiError(Exception):
 
 class NotFoundError(ApiError):
     """Resource not found — expected empty result, not a failure."""
-
-
-class FatalError(Exception):
-    """Non-recoverable error that should stop the bot immediately."""
 
 
 def _cookies_hash(jar: dict) -> str:

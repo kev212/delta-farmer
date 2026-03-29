@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from . import telegram as tg
 from . import telemetry
 from .crypto import config_cli_parser
-from .http import FatalError
+from .errors import AppError
 from .logger import logger
 from .telegram import TgConfig
 
@@ -182,7 +182,7 @@ async def create_cli(name: str, config_path: str, sec_fields: list[str]) -> argp
 def run_app(coro: Coroutine) -> None:
     try:
         asyncio.run(coro)
-    except FatalError as e:
+    except AppError as e:
         logger.error(str(e))
     except KeyboardInterrupt:
         pass

@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Self, Type
 
-from eth_account import Account
 from eth_account.messages import encode_typed_data
 from pydantic import BaseModel
 
@@ -155,7 +154,7 @@ class NadoClient:
             proxy=proxy,
         )
 
-        self.account = Account.from_key(privkey)
+        self.account = utils.parse_eth_key(privkey, name)
         self.address = str(self.account.address)
         self.sender = _build_sender(self.address, "default")
         self._order_products: dict[str, int] = {}  # digest → product_id

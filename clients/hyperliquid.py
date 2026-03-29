@@ -9,7 +9,6 @@ from math import floor, log10
 from typing import Any, NoReturn, Self, Type
 
 import msgpack
-from eth_account import Account
 from eth_account.messages import encode_typed_data
 from eth_account.signers.local import LocalAccount
 from web3 import Web3
@@ -71,7 +70,7 @@ class HyperLiquidClient:
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name
-        self.account: LocalAccount = Account.from_key(privkey)
+        self.account: LocalAccount = utils.parse_eth_key(privkey, name)
         self.address: str = self.account.address
         self.http = AsyncHttp(
             baseurl=HL_API,

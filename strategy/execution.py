@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Sequence
 
 from lib import utils
-from lib.http import FatalError
+from lib.errors import AppError
 from lib.logger import logger
 from lib.utils import round_to_tick_size
 
@@ -69,7 +69,7 @@ async def fill_limit_order(
         order = await client.get_order(order_id)
         if order is None:
             if (time.time() - started_at) > timeout:
-                raise FatalError(f"Limit order {order_id} never appeared — unknown state, aborting")
+                raise AppError(f"Limit order {order_id} never appeared — unknown state, aborting")
             continue  # archive lag — keep polling
 
         elapsed = time.time() - started_at

@@ -6,7 +6,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal, Self, Type
 
-from eth_account import Account
 from eth_account.messages import encode_typed_data
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,7 +111,7 @@ class EtherealClient:
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name
-        self.account = Account.from_key(privkey)
+        self.account = utils.parse_eth_key(privkey, name)
         self.address = self.account.address
         self.http = AsyncHttp(
             baseurl=API_URL,

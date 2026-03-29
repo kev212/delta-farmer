@@ -295,7 +295,7 @@ class ZeroOneClient:
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
         self.name = name
-        self.address = Account.from_key(privkey.removeprefix("0x").zfill(64)).address
+        self.address = utils.parse_eth_key(privkey, name).address
         self._turnkey = ZeroOneTurnkey(privkey, proxy)
         self._session_key = Ed25519PrivateKey.generate()
         self._session_pubkey = self._session_key.public_key().public_bytes_raw()

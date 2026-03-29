@@ -554,8 +554,8 @@ async def test_limit_filled_immediately_no_polling():
 
 
 async def test_limit_open_get_order_none_raises_fatal(monkeypatch):
-    """limit_order() returns OPEN, get_order always None → FatalError (unknown order state)."""
-    from lib.http import FatalError
+    """limit_order() returns OPEN, get_order always None → AppError (unknown order state)."""
+    from lib.errors import AppError
 
     a = MockClient("a")
     monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
@@ -574,7 +574,7 @@ async def test_limit_open_get_order_none_raises_fatal(monkeypatch):
     a.limit_order = open_limit  # type: ignore[method-assign]
     # get_order returns None by default in MockClient
 
-    with pytest.raises(FatalError, match="never appeared"):
+    with pytest.raises(AppError, match="never appeared"):
         await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=0)
 
 

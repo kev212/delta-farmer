@@ -13,6 +13,7 @@ from typing import Awaitable, Callable, TypeVar
 
 from filelock import FileLock
 
+from .errors import AppError
 from .logger import logger
 
 T = TypeVar("T")
@@ -292,6 +293,38 @@ def parse_signature_type(value: str) -> list[dict[str, str]]:
         ftype, fname = part.rsplit(" ", 1)
         out.append({"name": fname, "type": ftype})
     return out
+
+
+# MARK: Key parsing
+
+
+def parse_eth_key(raw: str, name: str = ""):
+    # Lazy import to avoid pulling eth_account into every module that imports utils.
+    from eth_account import Account
+
+    who = f" for account '{name}'" if name else ""
+    try:
+        return Account.from_key(raw)
+    except Exception as e:
+        raise AppError(f"Invalid Ethereum private key{who}: {e}") from None
+
+
+def parse_sol_key(raw: str | list[int], name: str = ""):
+    # Lazy imports to avoid pulling Solana deps into every module that imports utils.
+    import base58
+    from solders.keypair import Keypair
+
+    who = f" for account '{name}'" if name else ""
+    try:
+        if isinstance(raw, list):
+            return Keypair.from_bytes(bytes(raw))
+        if raw.startswith("["):
+            return Keypair.from_bytes(bytes(json.loads(raw)))
+        return Keypair.from_bytes(base58.b58decode(raw))
+    except Exception as e:
+        raise AppError(
+            f"Invalid Solana private key{who}: expected base58 string or JSON byte array — {e}"
+        ) from None
 
 
 # MARK: Async utils

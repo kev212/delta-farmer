@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Self, Type
 
-from eth_account import Account
 from eth_account.messages import encode_defunct
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
@@ -80,7 +79,7 @@ class OmniClient:
         return cls(name=cfg.name, privkey=cfg.privkey.get_secret_value(), proxy=cfg.proxy)
 
     def __init__(self, name: str, privkey: str, proxy: str | None = None):
-        self.account = Account.from_key(privkey)
+        self.account = utils.parse_eth_key(privkey, name)
         self.address = self.account.address
         self.name = name
         self.http = AsyncHttp(
