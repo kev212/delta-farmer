@@ -65,8 +65,6 @@ class DeltaStrategy:
 
     # MARK: Core trading flow
 
-    MAX_FAILURES = 5
-
     async def _wait(self, wait_sec: float):
         logger.info(utils.wait_msg(wait_sec))
         await utils.interruptible_sleep(wait_sec, self.stop_event)
@@ -90,19 +88,20 @@ class DeltaStrategy:
                 await close_all(self.accounts)
 
                 failures += 1
-                if failures >= self.MAX_FAILURES:
-                    msg = "Too many consecutive failures, stopping strategy"
-                    logger.opt(exception=True).error(msg)
+                if self.cfg.max_failures > 0 and failures >= self.cfg.max_failures:
+                    logger.opt(exception=True).error("Too many consecutive failures, stopping")
                     await tg.on_crash(f"{type(e).__name__}: {e}")
                     # TODO: return exits only this group (others keep running); raise propagates to
                     # CLI and prints ugly traceback; SystemExit(1) kills the whole process cleanly.
                     # Decide which behaviour is correct for multi-group mode.
                     return
 
-                msg = f"Cycle failed ({failures}/{self.MAX_FAILURES}) {type(e).__name__}: {e}"
+                wait_sec = min(3 * (2 ** (failures - 1)), 60) * 60  # 3m→6m→12m→24m→48m→60m
+                wait_str = utils.format_duration(wait_sec)
+                msg = f"Cycle failed ({failures}) {type(e).__name__}: {e}, retrying in {wait_str}"
                 logger.warning(msg)
-                await tg.on_error(f"{type(e).__name__}: {e}", failures, self.MAX_FAILURES)
-                await self._wait(60 * 3)  # wait a bit before retrying after a failure
+                await tg.on_error(f"{type(e).__name__}: {e}", failures, wait_sec)
+                await self._wait(wait_sec)
 
     async def trade_cycle(self):
         """Run one full trade cycle across the selected symbols."""
@@ -151,8 +150,8 @@ class DeltaStrategy:
         # 7. Report P/L
         now_bals = await self.get_balances(accounts)
         pnl = now_bals.log_pnl(was_bals, self.initial_bal)
-        await tg.on_trade_stop(pnl, time.time() - stime, now_bals.items(), reply_to=msg_id)
-        tg.on_trade(total_size, pnl)
+        dur = time.time() - stime
+        await tg.on_trade_stop(pnl, dur, float(total_size), now_bals.items(), msg_id)
 
     # MARK: Helpers
 

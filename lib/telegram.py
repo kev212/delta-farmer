@@ -103,8 +103,20 @@ async def on_trade_start(symbols: list[str], size_usd: float, accounts: list[str
 
 
 async def on_trade_stop(
-    pnl: float, duration: float, balances: list[tuple[str, float]], reply_to: int | None = None
+    pnl: float,
+    duration: float,
+    volume_usd: float,
+    balances: list[tuple[str, float]],
+    reply_to: int | None = None,
 ) -> None:
+    exchange = _state.exchange
+    if exchange not in _stats:
+        _stats[exchange] = {"trades": 0, "volume": 0.0, "pnl": 0.0}
+    _stats[exchange]["trades"] += 1
+    _stats[exchange]["volume"] += volume_usd
+    _stats[exchange]["pnl"] += pnl
+    _save()
+
     if not enabled() or "stop" not in _state.cfg.notify:
         return
 
@@ -114,12 +126,14 @@ async def on_trade_stop(
     )
 
 
-async def on_error(error: str, attempt: int, max_attempts: int) -> None:
+async def on_error(error: str, attempt: int, retry_in: float) -> None:
     if not enabled() or "errors" not in _state.cfg.notify:
         return
 
+    from lib.utils import format_duration
+
     ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    msg = f"({attempt}/{max_attempts})\n`{error[:200]}`\n_{ts}_"
+    msg = f"(attempt {attempt}, retry in {format_duration(retry_in)})\n`{error[:200]}`\n_{ts}_"
     msg = f"⚠️ *{_state.exchange}* — cycle failed {msg}"
     await send(msg)
 
@@ -137,16 +151,6 @@ async def on_crash(error: str) -> None:
 
 def _save() -> None:
     pickle_dump(_STATS_PATH, dict(_stats))
-
-
-def on_trade(volume_usd: float, pnl: float) -> None:
-    exchange = _state.exchange
-    if exchange not in _stats:
-        _stats[exchange] = {"trades": 0, "volume": 0.0, "pnl": 0.0}
-    _stats[exchange]["trades"] += 1
-    _stats[exchange]["volume"] += volume_usd
-    _stats[exchange]["pnl"] += pnl
-    _save()
 
 
 # MARK: Background loop

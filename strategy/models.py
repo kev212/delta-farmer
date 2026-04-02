@@ -174,6 +174,7 @@ class StrategyConfig(BaseModel):
     trade_heartbeat: DurationSec = DurationSec("15s")
     position_roi_limit: float = Field(0.8, gt=0, lt=1)
     combined_roi_limit: float = Field(0.1, gt=0, lt=1)
+    max_failures: int = Field(0, ge=0)  # 0 = infinite retries
     use_limit: bool = False
     limit_wait: DurationSec = DurationSec("90s")
     limit_market_fallback: bool = True

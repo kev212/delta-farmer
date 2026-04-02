@@ -525,9 +525,9 @@ async def test_loop_closes_all_on_startup():
 
 
 async def test_loop_closes_all_on_exception():
-    """If trade_cycle raises, run() calls close_all and retries until MAX_FAILURES."""
+    """If trade_cycle raises, run() calls close_all and retries until max_failures."""
     a, b = MockClient("a"), MockClient("b")
-    strategy = DeltaStrategy(make_cfg(), [a, b])
+    strategy = DeltaStrategy(make_cfg(max_failures=3), [a, b])
     strategy._wait = lambda _sec: asyncio.sleep(0)  # type: ignore[method-assign]
 
     async def boom():
@@ -535,7 +535,7 @@ async def test_loop_closes_all_on_exception():
 
     strategy.trade_cycle = boom  # type: ignore[method-assign]
 
-    await strategy.run()  # returns cleanly after MAX_FAILURES (no raise)
+    await strategy.run()  # returns cleanly after max_failures (no raise)
 
     assert "cancel_all_orders" in a.calls
 

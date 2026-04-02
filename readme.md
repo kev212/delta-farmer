@@ -216,10 +216,11 @@ Only relevant when `use_limit = true`.
 
 ### Safety limits
 
-| Parameter            | Default | Description                                                             |
-| -------------------- | ------- | ----------------------------------------------------------------------- |
-| `position_roi_limit` | `0.8`   | Emergency-close the full cycle if any single position reaches ±80% ROI. |
-| `combined_roi_limit` | `0.1`   | Emergency-close if the combined basket ROI reaches ±10%.                |
+| Parameter            | Default | Description                                                                                                                                                 |
+| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `position_roi_limit` | `0.8`   | Emergency-close the full cycle if any single position reaches ±80% ROI.                                                                                     |
+| `combined_roi_limit` | `0.1`   | Emergency-close if the combined basket ROI reaches ±10%.                                                                                                    |
+| `max_failures`       | `0`     | Stop the strategy after this many consecutive cycle failures. `0` = never stop — retries indefinitely with exponential backoff (up to 1h between attempts). |
 
 ### Grouped trading
 
