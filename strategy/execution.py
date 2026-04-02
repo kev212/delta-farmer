@@ -33,23 +33,29 @@ class PositionState:
 
 # MARK: Limit order
 
+_LIMIT_PRICE_DRIFT_PCT = Decimal("0.0025")  # 0.25% BBO drift → give up waiting, go to fallback
+
+
+async def _fetch_limit_price(
+    client: TradingClient, symbol: str, side: Side, tick_size: Decimal
+) -> Decimal:
+    """Fetch BBO and return tick-rounded price for the given side."""
+    bid, ask = await client.get_bbo(symbol)
+    return round_to_tick_size(bid if side == "bid" else ask, tick_size)
+
 
 async def fill_limit_order(
     client: TradingClient,
     symbol: str,
     side: Side,
     qty: Decimal,
-    price: Decimal | None = None,
     reduce_only=False,
     timeout=60,
     use_market_fallback=True,
 ) -> Order | None:
     """Place limit order and wait for fill with optional market fallback."""
-    if price is None:
-        tick_size = await client.get_tick_size(symbol)
-        bid, ask = await client.get_bbo(symbol)
-        raw_price = bid if side == "bid" else ask
-        price = round_to_tick_size(raw_price, tick_size)
+    tick_size = await client.get_tick_size(symbol)
+    price = await _fetch_limit_price(client, symbol, side, tick_size)
 
     log = logger.bind(account=client.name)
     log.debug(f"Limit {side} {qty} {symbol} @ {price}")
@@ -61,6 +67,7 @@ async def fill_limit_order(
     started_at, filled_since = time.time(), None
     poll_delay = 0.25  # starts at 250ms, grows to ~3s
     last_log_at = started_at
+    bbo_stable_warned = False
 
     while True:
         await asyncio.sleep(poll_delay)
@@ -94,7 +101,17 @@ async def fill_limit_order(
 
         check_time = filled_since or started_at
         if (time.time() - check_time) > timeout:
-            log.debug(f"Limit order timeout after {timeout}s")
+            current_price = await _fetch_limit_price(client, symbol, side, tick_size)
+            drift = abs(current_price - price) / price
+            if drift <= _LIMIT_PRICE_DRIFT_PCT:
+                if not bbo_stable_warned:
+                    log.debug(f"Limit timeout but BBO stable (drift={drift:.3%}), continuing wait")
+                    bbo_stable_warned = True
+                started_at, filled_since = time.time(), None
+                continue
+
+            bbo_stable_warned = False
+            log.debug(f"Limit order timeout after {timeout}s (BBO drift {drift:.3%})")
             await client.cancel_order(order)
             remaining = order.size - order.filled
             if use_market_fallback and remaining > 0:

@@ -547,7 +547,7 @@ async def test_limit_filled_immediately_no_polling():
     """limit_order() returns FILLED order, get_order never called (market-fallback case)."""
     a = MockClient("a")
     # MockClient.limit_order returns FILLED by default
-    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"))
+    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"))
     assert result is not None
     assert result.status == OrderStatus.FILLED
     assert "get_order" not in a.calls
@@ -575,7 +575,7 @@ async def test_limit_open_get_order_none_raises_fatal(monkeypatch):
     # get_order returns None by default in MockClient
 
     with pytest.raises(AppError, match="never appeared"):
-        await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=0)
+        await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), timeout=0)
 
 
 async def test_limit_open_polls_until_filled(monkeypatch):
@@ -613,7 +613,7 @@ async def test_limit_open_polls_until_filled(monkeypatch):
     a.limit_order = open_limit  # type: ignore[method-assign]
     a.get_order = eventually_filled  # type: ignore[method-assign]
 
-    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), Decimal("50000"), timeout=60)
+    result = await fill_limit_order(a, "BTC", "bid", Decimal("0.002"), timeout=60)
     assert result is not None
     assert result.status == OrderStatus.FILLED
     assert call_count >= 3
@@ -651,12 +651,12 @@ async def test_limit_canceled_by_exchange_raises(monkeypatch):
     a.get_order = get_canceled  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="canceled by exchange"):
-        await fill_limit_order(a, "BTC", "bid", qty, Decimal("50000"), use_market_fallback=True)
+        await fill_limit_order(a, "BTC", "bid", qty, use_market_fallback=True)
     assert "market_order" not in a.calls
 
 
 async def test_limit_timeout_uses_market_fallback(monkeypatch):
-    """Order still OPEN after timeout → canceled then filled via market."""
+    """BBO drifted >0.25% at timeout → canceled then filled via market."""
     a = MockClient("a")
     monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
     qty = Decimal("0.002")
@@ -679,16 +679,24 @@ async def test_limit_timeout_uses_market_fallback(monkeypatch):
             side="bid",
             size=qty,
             filled=Decimal(0),
-            price=Decimal("50000"),
+            price=Decimal("49999"),
             status=OrderStatus.OPEN,
         )
 
+    bbo_calls = 0
+
+    async def drifted_bbo(symbol):
+        nonlocal bbo_calls
+        bbo_calls += 1
+        if bbo_calls == 1:
+            return Decimal("49999"), Decimal("50001")  # placement
+        return Decimal("49860"), Decimal("50140")  # drifted ~0.28% > 0.25%
+
     a.limit_order = open_limit  # type: ignore[method-assign]
     a.get_order = still_open  # type: ignore[method-assign]
+    a.get_bbo = drifted_bbo  # type: ignore[method-assign]
 
-    result = await fill_limit_order(
-        a, "BTC", "bid", qty, Decimal("50000"), timeout=0, use_market_fallback=True
-    )
+    result = await fill_limit_order(a, "BTC", "bid", qty, timeout=0, use_market_fallback=True)
     assert result is not None
     assert result.status == OrderStatus.FILLED
     assert "cancel_order" in a.calls
@@ -696,7 +704,7 @@ async def test_limit_timeout_uses_market_fallback(monkeypatch):
 
 
 async def test_limit_timeout_no_fallback_raises(monkeypatch):
-    """Timeout with use_market_fallback=False → RuntimeError with reason."""
+    """BBO drifted at timeout, use_market_fallback=False → RuntimeError with reason."""
     a = MockClient("a")
     monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
     qty = Decimal("0.002")
@@ -719,18 +727,70 @@ async def test_limit_timeout_no_fallback_raises(monkeypatch):
             side="bid",
             size=qty,
             filled=Decimal(0),
-            price=Decimal("50000"),
+            price=Decimal("49999"),
             status=OrderStatus.OPEN,
         )
 
+    bbo_calls = 0
+
+    async def drifted_bbo(symbol):
+        nonlocal bbo_calls
+        bbo_calls += 1
+        if bbo_calls == 1:
+            return Decimal("49999"), Decimal("50001")  # placement
+        return Decimal("49860"), Decimal("50140")  # drifted ~0.28% > 0.25%
+
     a.limit_order = open_limit  # type: ignore[method-assign]
     a.get_order = still_open  # type: ignore[method-assign]
+    a.get_bbo = drifted_bbo  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="timed out"):
-        await fill_limit_order(
-            a, "BTC", "bid", qty, Decimal("50000"), timeout=0, use_market_fallback=False
-        )
+        await fill_limit_order(a, "BTC", "bid", qty, timeout=0, use_market_fallback=False)
     assert "cancel_order" in a.calls
+    assert "market_order" not in a.calls
+
+
+async def test_limit_stable_bbo_resets_timer(monkeypatch):
+    """BBO stable at timeout → timer resets, keeps waiting, fills without market fallback."""
+    a = MockClient("a")
+    monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
+    qty = Decimal("0.002")
+    get_order_calls = 0
+
+    async def open_limit(s, side, q, price, reduce_only=False):
+        return Order(
+            id="ord-l",
+            symbol=s,
+            side=side,
+            size=q,
+            filled=Decimal(0),
+            price=price,
+            status=OrderStatus.OPEN,
+        )
+
+    async def fills_on_second(oid):
+        nonlocal get_order_calls
+        get_order_calls += 1
+        if get_order_calls == 1:
+            return Order(
+                id=oid,
+                symbol="BTC",
+                side="bid",
+                size=qty,
+                filled=Decimal(0),
+                price=Decimal("49999"),
+                status=OrderStatus.OPEN,
+            )
+        return make_order(oid, "BTC", "bid", qty)
+
+    a.limit_order = open_limit  # type: ignore[method-assign]
+    a.get_order = fills_on_second  # type: ignore[method-assign]
+    # get_bbo always returns same value — drift = 0%, timer resets
+
+    result = await fill_limit_order(a, "BTC", "bid", qty, timeout=0, use_market_fallback=True)
+    assert result is not None
+    assert result.status == OrderStatus.FILLED
+    assert "cancel_order" not in a.calls
     assert "market_order" not in a.calls
 
 
