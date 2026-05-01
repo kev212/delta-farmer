@@ -99,7 +99,7 @@ class OmniClient:
         rep = await self.http.request("GET", f"/auth/company/{self.address}")
         rep.raise_for_status()
         res = rep.json()
-        return res["company"] is not None and res["settlement_pool"] is not None
+        return res["settlement_pool"] is not None
 
     @retry(max_attempts=3, delay=1.0)
     async def _ensure_auth(self):

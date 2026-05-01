@@ -50,8 +50,8 @@ ZERO1_GENESIS = datetime(2026, 2, 3, tzinfo=timezone.utc)  # week 1 start (Tuesd
 # NEXT_DPL = "dpl_9aUVF3dnWzSVmzyniboKPq4vBShx"
 # AUTH_ACT = "40e13f708d15eda73b64347a61f6654787ff509793"
 
-NEXT_DPL = "dpl_9aUVF3dnWzSVmzyniboKPq4vBShx__"
-AUTH_ACT = "40e13f708d15eda73b64347a61f6654787ff509793__"
+NEXT_DPL = "dpl_GFSVPnSBoHzn1LwMjD62yqw9kQJE"
+AUTH_ACT = "40acd03b11323ee86fb9f9f6551fb4865bfd6437bb"
 
 _POINTS_META_LOCK = asyncio.Lock()
 _POINTS_META_CACHE = ".cache/zero1_points_meta.json"
@@ -80,9 +80,12 @@ async def _get_points_meta(
             "Next-Router-State-Tree": "%5B%22%22%2C%7B%7D%2Cnull%2Cnull%2Ctrue%5D",
         }
         rsc = await http.request("GET", f"{ZERO1_APP}/points", headers=rsc_hdr)
-        dpl_m = re.search(r"dpl=(dpl_[A-Za-z0-9]+)", rsc.text)
-        dpl = dpl_m.group(1) if dpl_m else NEXT_DPL
-        chunks = list(dict.fromkeys(re.findall(r'"(/_next/static/chunks/[^"?]+\.js)', rsc.text)))
+        html = await http.request("GET", f"{ZERO1_APP}/points")
+        dpl_re = r"dpl=(dpl_[A-Za-z0-9]+)"
+        dpl_mm = re.search(dpl_re, rsc.text) or re.search(dpl_re, html.text)
+        dpl = dpl_mm.group(1) if dpl_mm else NEXT_DPL
+        combined = rsc.text + html.text
+        chunks = list(dict.fromkeys(re.findall(r'"(/_next/static/chunks/[^"?]+\.js)', combined)))
         for c in chunks:
             r = await http.request("GET", f"{ZERO1_APP}{c}?dpl={dpl}")
             m = re.search(
