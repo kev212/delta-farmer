@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.6.4 – 2026-05-06
+
+### Fixes
+
+- Fixed 01.xyz authentication to use the new Janus proxy login endpoint after the legacy authproxy was removed
+
+**Full Changelog**: https://github.com/vladkens/delta-farmer/compare/v0.6.3...v0.6.4
+
+---
+
+## v0.6.3 – 2026-05-01
+
+### Fixes
+
+- Fixed Omni `info` command crashing when the exchange removed the `company` field from the registration API
+- Fixed 01.xyz points auto-discovery failing because the server action chunk was not included in RSC responses — now scans HTML page chunks as well
+
+**Full Changelog**: https://github.com/vladkens/delta-farmer/compare/v0.6.2...v0.6.3
+
+---
+
+## v0.6.2 – 2026-04-05
+
+### Fixes
+
+- Fixed 01.xyz points auth breaking after a deployment change; auto-discovery now updates the action hash and deployment ID without manual intervention
+- Fixed 01.xyz points pagination so all records are fetched instead of only the first page
+- Fixed 01.xyz fee rates not being applied correctly
+
+### Improvements
+
+- Git commit hash is now shown in the version line of `info` commands
+
+**Full Changelog**: https://github.com/vladkens/delta-farmer/compare/v0.6.1...v0.6.2
+
+---
+
 ## v0.6.1 – 2026-04-05
 
 ### Fixes

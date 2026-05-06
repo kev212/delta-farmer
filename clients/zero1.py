@@ -41,17 +41,14 @@ from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingCli
 
 NORD_API = "https://zo-mainnet.n1.xyz"
 TURNKEY_API = "https://api.turnkey.com"
-TURNKEY_AUTHPROXY = "https://authproxy.turnkey.com"
-TURNKEY_AUTHPROXY_CONFIG_ID = "5ded06a7-4de9-40ba-8574-8716f865cb02"
+TURNKEY_ORG_ID = "497f60f3-57cd-4aec-af39-7415c2fafaab"
 
 ZERO1_APP = "https://01.xyz"
 ZERO1_GENESIS = datetime(2026, 2, 3, tzinfo=timezone.utc)  # week 1 start (Tuesday)
 
-# NEXT_DPL = "dpl_9aUVF3dnWzSVmzyniboKPq4vBShx"
-# AUTH_ACT = "40e13f708d15eda73b64347a61f6654787ff509793"
-
-NEXT_DPL = "dpl_GFSVPnSBoHzn1LwMjD62yqw9kQJE"
-AUTH_ACT = "40acd03b11323ee86fb9f9f6551fb4865bfd6437bb"
+# last know values. can be changed on next deployment, but code have auto-discovery fallback
+AUTH_ACT = "404455b12249fd9ec1aea6c44bf40eb0338e7cd9a2"
+NEXT_DPL = "dpl_BnNc2gSJ2i8QQPVgf45a7rCAsAmA"
 
 _POINTS_META_LOCK = asyncio.Lock()
 _POINTS_META_CACHE = ".cache/zero1_points_meta.json"
@@ -217,9 +214,10 @@ class ZeroOneTurnkey:
             .public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
             .hex()
         )
+        self._sub_org_id: str | None = None
 
         headers: dict[str, str] = {}
-        self._authproxy = AsyncHttp(baseurl=TURNKEY_AUTHPROXY, headers=headers, proxy=proxy)
+        self._janus = AsyncHttp(baseurl=ZERO1_APP, headers=headers, proxy=proxy)
         self._api = AsyncHttp(baseurl=TURNKEY_API, headers=headers, proxy=proxy)
 
     def _stamp_eip191(self, body: str) -> str:
@@ -266,35 +264,50 @@ class ZeroOneTurnkey:
             raise ApiError(f"Turnkey {path} failed", rep)
         return rep.json()
 
-    @ttl_cache(86400)
-    async def _get_org_id(self) -> str:
-        pld = {"filterType": "PUBLIC_KEY", "filterValue": self._evm_pubkey_hex}
-        hdr = {"x-auth-proxy-config-id": TURNKEY_AUTHPROXY_CONFIG_ID}
-        rep = await self._authproxy.request("POST", "/v1/account", json=pld, headers=hdr)
-        if not rep.ok:
-            raise ApiError("Turnkey account lookup failed", rep)
-        data = rep.json()
-        if "organizationId" not in data:
-            raise ApiError(f"Turnkey: wallet not registered on 01.xyz (response: {data})")
-        return data["organizationId"]
+    def _jwt_org_id(self, token: str) -> str:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))["organization_id"]
 
     @ttl_cache(86400)
     async def login(self) -> str:
-        """Authenticate via EVM key → Turnkey → returns Solana address."""
-        org_id = await self._get_org_id()
-        await self._call(
-            "/public/v1/submit/stamp_login",
+        """Authenticate via EVM key → Turnkey (via Janus proxy) → returns Solana address."""
+        body = json.dumps(
             {
-                "parameters": {"publicKey": self._ephem_pubkey_hex, "expirationSeconds": "1209600"},
-                "organizationId": org_id,
+                "parameters": {
+                    "publicKey": self._ephem_pubkey_hex,
+                    "expirationSeconds": "1209600",
+                    "invalidateExisting": True,
+                },
+                "organizationId": TURNKEY_ORG_ID,
+                "timestampMs": str(int(time.time() * 1000)),
                 "type": "ACTIVITY_TYPE_STAMP_LOGIN",
             },
-            eip191=True,
+            separators=(",", ":"),
         )
+        stamp = self._stamp_eip191(body)
+        rep = await self._janus.request(
+            "POST",
+            "/api/janus/api/auth/v2/wallet/login",
+            json={
+                "signedRequest": {
+                    "body": body,
+                    "stamp": {"stampHeaderName": "X-Stamp", "stampHeaderValue": stamp},
+                    "url": f"{TURNKEY_API}/public/v1/submit/stamp_login",
+                },
+                "expectedAddress": self._evm_account.address.lower(),
+            },
+        )
+        if not rep.ok:
+            raise ApiError("Turnkey stamp_login via Janus failed", rep)
+
+        session_token = rep.json()["data"]["session"]["sessionToken"]
+        self._sub_org_id = self._jwt_org_id(session_token)
+
         res = await self._call(
             "/public/v1/query/list_wallet_accounts",
             {
-                "organizationId": org_id,
+                "organizationId": self._sub_org_id,
                 "includeWalletDetails": True,
                 "paginationOptions": {"limit": "100"},
             },
@@ -306,8 +319,8 @@ class ZeroOneTurnkey:
 
     async def sign_payload(self, payload_hex: str) -> bytes:
         """Sign Nord action payload (hex string) via Turnkey managed Ed25519 key."""
-        org_id = await self._get_org_id()
         solana_addr = await self.login()
+        assert self._sub_org_id is not None
         res = await self._call(
             "/public/v1/submit/sign_raw_payload",
             {
@@ -317,7 +330,7 @@ class ZeroOneTurnkey:
                     "encoding": "PAYLOAD_ENCODING_TEXT_UTF8",
                     "hashFunction": "HASH_FUNCTION_NOT_APPLICABLE",
                 },
-                "organizationId": org_id,
+                "organizationId": self._sub_org_id,
                 "type": "ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2",
             },
         )
