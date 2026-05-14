@@ -42,6 +42,7 @@ from strategy import Order, OrderStatus, Position, ProfileInfo, Side, TradingCli
 NORD_API = "https://zo-mainnet.n1.xyz"
 TURNKEY_API = "https://api.turnkey.com"
 TURNKEY_ORG_ID = "497f60f3-57cd-4aec-af39-7415c2fafaab"
+ZERO1_JANUS_LOGIN_PATH = "/api/janus/v1/auth/wallet/login"
 
 ZERO1_APP = "https://01.xyz"
 ZERO1_GENESIS = datetime(2026, 2, 3, tzinfo=timezone.utc)  # week 1 start (Tuesday)
@@ -286,23 +287,22 @@ class ZeroOneTurnkey:
             separators=(",", ":"),
         )
         stamp = self._stamp_eip191(body)
-        rep = await self._janus.request(
-            "POST",
-            "/api/janus/api/auth/v2/wallet/login",
-            json={
-                "signedRequest": {
-                    "body": body,
-                    "stamp": {"stampHeaderName": "X-Stamp", "stampHeaderValue": stamp},
-                    "url": f"{TURNKEY_API}/public/v1/submit/stamp_login",
-                },
-                "expectedAddress": self._evm_account.address.lower(),
+        payload = {
+            "signedRequest": {
+                "body": body,
+                "stamp": {"stampHeaderName": "X-Stamp", "stampHeaderValue": stamp},
+                "url": f"{TURNKEY_API}/public/v1/submit/stamp_login",
             },
-        )
+            "expectedAddress": self._evm_account.address.lower(),
+        }
+        rep = await self._janus.request("POST", ZERO1_JANUS_LOGIN_PATH, json=payload)
         if not rep.ok:
             raise ApiError("Turnkey stamp_login via Janus failed", rep)
 
-        session_token = rep.json()["data"]["session"]["sessionToken"]
-        self._sub_org_id = self._jwt_org_id(session_token)
+        rep_data = rep.json()["data"]
+        session_token = rep_data["session"]["sessionToken"]
+        user = rep_data.get("identifyData", {}).get("user", {})
+        self._sub_org_id = user.get("turnkeySuborgId") or self._jwt_org_id(session_token)
 
         res = await self._call(
             "/public/v1/query/list_wallet_accounts",
