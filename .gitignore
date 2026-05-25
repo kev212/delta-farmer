@@ -11,4 +11,5 @@ configs/
 demo/
 scripts/debug_*.py
 tasks/
-uv.lock.DS_Store
+uv.lock
+.DS_Store
