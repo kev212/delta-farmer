@@ -407,9 +407,17 @@ class NadoClient:
             reduce_only=reduce_only,
         )
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         bid, ask = await self.get_bbo(symbol)
-        price = ask * Decimal("1.005") if side == "bid" else bid * Decimal("0.995")
+        slip = slippage if slippage is not None else Decimal("0.005")
+        price = ask * (Decimal(1) + slip) if side == "bid" else bid * (Decimal(1) - slip)
         tick = await self.get_tick_size(symbol)
         price = utils.round_to_tick_size(price, tick)
         return await self._place_order(

@@ -11,7 +11,7 @@ Delta-neutral trading bot. Exchanges: Ethereal, Hyena, Nado, Omni, Onyx, Pacific
 | file                     | what lives there                                                                                                                                    |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `strategy/models.py`     | `Side`, `Order`, `Position`, `ProfileInfo`, `TradingClient` protocol, `TradeAction`, `StrategyConfig`, `load_config`, `usd_to_qty`, `opposite_side` |
-| `strategy/execution.py`  | `fill_limit_order`, `open_positions`, `close_symbol_positions`, `hold_positions`, `positions_within_limits`, `close_all` (no warmup, retries 3×)    |
+| `strategy/execution.py`  | `fill_limit_order`, `open_positions`, `close_symbol_positions`, `hold_positions`, `positions_within_limits`, `close_all` (no warmup, retries 3×); also `_check_spread_one`, `check_open_safe`, `check_close_safe`, `wait_safe_close`, `CloseSafetyState` |
 | `strategy/planner.py`    | `plan_symbol_actions`, `calc_symbol_sizes`, `calc_total_from_pct`                                                                                   |
 | `strategy/delta.py`      | `DeltaStrategy` class only                                                                                                                          |
 | `strategy/runner.py`     | `run_groups` (app entry point), `close_all` (with warmup — CLI only)                                                                                |
@@ -22,6 +22,8 @@ Delta-neutral trading bot. Exchanges: Ethereal, Hyena, Nado, Omni, Onyx, Pacific
 | `clients/hyperliquid.py` | `HyperLiquidClient` — **internal base class** for HL-family exchanges; HIP-3 aware. Not a supported exchange for end users.                         |
 | `clients/{exchange}.py`  | implement `TradingClient` (or extend `HyperLiquidClient`)                                                                                           |
 | `apps/{exchange}.py`     | CLI launcher per exchange                                                                                                                           |
+| `tools/spread_sampler.py`| CLI utility to observe live BBO spread — used for threshold tuning                                                                                  |
+| `tests/test_spread_guard.py`| Unit tests for spread/delta-PnL safety helpers (`_check_spread_one`, `check_open_safe`, `check_close_safe`)                                     |
 
 ## Two `close_all` — don't mix up
 
@@ -62,6 +64,11 @@ Full spec in `StrategyConfig` (`strategy/models.py`):
 - `regroup_interval` → stops groups, re-sorts by balance, restarts
 - Deprecated: `markets` → `symbols`, `first_as_main` → `first_as_prime`
 - Durations: `"15s"` / `"5m"` / `"1h"` or int seconds; ranges: `[min, max]`
+- Slippage: `market_slippage_open` (default 0.005), `market_slippage_close` (default 0.001) — override hardcoded client defaults
+- Spread guard: `max_spread_open_bps`, `max_spread_close_bps` (0 = disabled, max 500)
+- Delta-PnL gate: `max_delta_pnl_pct` (0 = disabled), `close_safety_wait_sec` (default 300), `close_safety_poll_sec` (default 15)
+- `tools/spread_sampler.py` — observe live BBO spread for threshold tuning
+- `tests/test_spread_guard.py` — unit tests for spread/delta safety helpers
 
 ## Safety checks (positions_within_limits)
 

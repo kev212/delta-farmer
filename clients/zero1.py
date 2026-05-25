@@ -683,7 +683,14 @@ class ZeroOneClient:
 
         raise ApiError(f"PlaceOrder: unexpected receipt: {receipt}")
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         bid, ask = await self.get_bbo(symbol)
         mid = (bid + ask) / 2
         m = await self._market(symbol)

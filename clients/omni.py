@@ -207,13 +207,21 @@ class OmniClient:
             reduce_only=o.is_reduce_only,
         )
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         signed_qty = qty if side == "bid" else -qty
         quote = await self._quote(symbol, abs(signed_qty))
+        max_slip = float(slippage) if slippage is not None else (0.001 if reduce_only else 0.005)
         pld = {
             "quote_id": quote.quote_id,
             "side": "buy" if side == "bid" else "sell",
-            "max_slippage": 0.001 if reduce_only else 0.005,
+            "max_slippage": max_slip,
             "is_reduce_only": reduce_only,
         }
         url = "/quotes/accept" if reduce_only else "/orders/new/market"

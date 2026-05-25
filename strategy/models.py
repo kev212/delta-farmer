@@ -100,7 +100,12 @@ class TradingClient(Protocol):
 
     # Orders - always work with qty (base asset quantity)
     async def market_order(
-        self, symbol: str, side: Side, qty: Decimal, reduce_only=False
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
     ) -> Order: ...
 
     async def limit_order(
@@ -174,6 +179,20 @@ class StrategyConfig(BaseModel):
     trade_heartbeat: DurationSec = DurationSec("15s")
     position_roi_limit: float = Field(0.8, gt=0, lt=1)
     combined_roi_limit: float = Field(0.1, gt=0, lt=1)
+
+    # Slippage tolerance (0-5%, override hardcoded client defaults)
+    market_slippage_open: float = Field(0.005, gt=0, le=0.05)
+    market_slippage_close: float = Field(0.001, gt=0, le=0.05)
+
+    # Spread guardrail (0 = disabled, in basis points)
+    max_spread_open_bps: int = Field(0, ge=0, le=500)
+    max_spread_close_bps: int = Field(0, ge=0, le=500)
+
+    # Delta-PnL gate at close (0 = disabled)
+    max_delta_pnl_pct: float = Field(0.0, ge=0.0, le=0.05)
+    close_safety_wait_sec: int = Field(300, ge=0, le=1800)
+    close_safety_poll_sec: int = Field(15, ge=5, le=120)
+
     max_failures: int = Field(0, ge=0)  # 0 = infinite retries
     use_limit: bool = False
     limit_wait: DurationSec = DurationSec("90s")

@@ -161,7 +161,14 @@ class MockClient(TradingClient):
         self._rec("close_position")
         return True
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False):
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ):
         self._rec("market_order")
         return make_order("ord-m", symbol, side, qty)
 
@@ -369,7 +376,8 @@ async def test_cycle_opens_opposite_sides():
 
     a_orders = [c for c in a.calls if c == "market_order"]
     b_orders = [c for c in b.calls if c == "market_order"]
-    assert len(a_orders) == 1 and len(b_orders) == 1  # each opens exactly once
+    # each does 2 market orders: 1 open + 1 close (close now uses market_order w/ slippage)
+    assert len(a_orders) == 2 and len(b_orders) == 2
 
 
 async def test_cycle_skips_when_no_valid_pair():
@@ -467,7 +475,7 @@ async def test_cycle_aborts_before_open_when_any_symbol_min_size_fails(monkeypat
 async def test_close_symbol_positions_passes_single_symbol_and_order(monkeypatch):
     # Symbol close helper must preserve account order for one symbol.
     accs = [MockClient("prime"), MockClient("acc2"), MockClient("acc3")]
-    seen: list[tuple[str, list[str], bool]] = []
+    seen: list[tuple[str, str]] = []
 
     async def fake_positions_main():
         return [make_position("ETH", "ask", "0.002")]
@@ -481,20 +489,21 @@ async def test_close_symbol_positions_passes_single_symbol_and_order(monkeypatch
     async def fake_fill(*args, **kwargs):
         return make_order("ord-l", "ETH", "bid", Decimal("0.002"))
 
-    async def fake_close_position(position):
-        seen.append(("ETH", [position.symbol], True))
-        return True
+    async def fake_market_order(symbol, side, qty, reduce_only=False, slippage=None):
+        seen.append((side, symbol))
+        return make_order("ord-m", symbol, side, qty)
 
     accs[0].positions = fake_positions_main  # type: ignore[method-assign]
     accs[1].positions = fake_positions_acc2  # type: ignore[method-assign]
     accs[2].positions = fake_positions_acc3  # type: ignore[method-assign]
-    accs[1].close_position = fake_close_position  # type: ignore[method-assign]
-    accs[2].close_position = fake_close_position  # type: ignore[method-assign]
+    accs[1].market_order = fake_market_order  # type: ignore[method-assign]
+    accs[2].market_order = fake_market_order  # type: ignore[method-assign]
     monkeypatch.setattr("strategy.execution._fill_limit_order", fake_fill)
 
     await close_symbol_positions(cast(list[TradingClient], accs), "ETH", make_cfg(), use_limit=True)
 
-    assert seen == [("ETH", ["ETH"], True), ("ETH", ["ETH"], True)]
+    # acc2 (bid/long → ask to close) and acc3 (bid/long → ask to close)
+    assert seen == [("ask", "ETH"), ("ask", "ETH")]
 
 
 # MARK: DeltaStrategy run behavior

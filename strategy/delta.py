@@ -13,11 +13,13 @@ from lib.logger import logger
 
 from .execution import (
     check_min_trade_sizes,
+    check_open_safe,
     close_all,
     close_symbol_positions,
     ensure_leverage,
     hold_positions,
     open_positions,
+    wait_safe_close,
 )
 from .models import StrategyConfig, TradeAction, TradingClient, usd_to_qty
 from .planner import calc_total_from_pct, plan_symbol_actions
@@ -128,6 +130,13 @@ class DeltaStrategy:
             rest_sizes = f"{sum(x.size_usd for x in actions[1:])} ({rest_sizes})"
             logger.info(f"Trade {symbol}: {size_usd} = {actions[0].size_usd} + {rest_sizes}")
 
+        # 3.5 Pre-flight spread check (open guardrail)
+        if self.cfg.max_spread_open_bps > 0:
+            ok, reason = await check_open_safe(symbol_actions, self.cfg.max_spread_open_bps)
+            if not ok:
+                logger.warning(f"Spread guardrail (open): {reason} — skip cycle")
+                return
+
         # 4. Open positions symbol by symbol
         total_size = float(sum(sum(a.size_usd for a in acts) for acts in symbol_actions.values()))
         acc_names = [x.client.name for acts in symbol_actions.values() for x in acts]
@@ -140,6 +149,16 @@ class DeltaStrategy:
 
         # 5. Wait with safety checks
         success = await hold_positions(symbol_actions, self.cfg, self.stop_event)
+
+        # 5.5 Pre-close safety gate (spread + delta PnL check)
+        if success:
+            close_state = await wait_safe_close(symbol_actions, self.cfg, self.stop_event)
+            if not close_state.safe:
+                logger.warning(
+                    f"Force-closing despite gate fail: {close_state.reason} "
+                    f"(spread_max={close_state.spread_bps_max:.1f}bps, "
+                    f"delta={close_state.delta_pnl_pct:.3%})"
+                )
 
         # 6. Close positions symbol by symbol
         for symbol, actions in symbol_actions.items():

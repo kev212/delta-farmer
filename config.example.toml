@@ -21,6 +21,34 @@ name = "acc2"
 privkey = "your-private-key-here"
 # enabled = false  # Exclude from trading but keep in stats
 
+# ============================================================
+# Slippage Tolerance
+# ============================================================
+# Maximum allowed slippage when submitting market orders.
+# Lower = less spread cost but higher rejection risk in volatile market.
+market_slippage_open = 0.005      # 0.5% — used when opening positions
+market_slippage_close = 0.001     # 0.1% — used when closing positions
+
+# ============================================================
+# Spread Guardrail (0 = disabled, in basis points)
+# ============================================================
+# Skip the cycle if BBO spread exceeds threshold.
+# 1 bps = 0.01%. Run: uv run tools/spread_sampler.py to observe.
+# Realistic baselines: Nado BTC 5-15bps, Omni BTC 10-30bps.
+max_spread_open_bps = 15          # skip cycle if any leg spread > 15bps at open
+max_spread_close_bps = 30         # wait for spread < 30bps before close
+
+# ============================================================
+# Delta-PnL Gate (close-time safety)
+# ============================================================
+# Before closing, check that total combined PnL is balanced.
+# 0 = disabled. 0.005 = 0.5% of total notional.
+max_delta_pnl_pct = 0.005
+
+# Max wait before force-closing when gate is held.
+close_safety_wait_sec = 300       # 5 minutes
+close_safety_poll_sec = 15        # poll every 15 seconds
+
 # [telegram]
 # token = "bot-token"
 # chat_id = 123456789

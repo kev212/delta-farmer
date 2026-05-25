@@ -380,10 +380,23 @@ class HyperLiquidClient:
             reduce_only=reduce_only,
         )
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         mid, tick = await asyncio.gather(self.get_price(symbol), self.get_tick_size(symbol))
-        slippage = Decimal("1.05") if side == "bid" else Decimal("0.95")
-        price = utils.round_to_tick_size(mid * slippage, tick)
+        slp = slippage if slippage is not None else Decimal("1.05" if side == "bid" else "0.95")
+        price = (
+            utils.round_to_tick_size(mid * slp, tick)
+            if slippage is None
+            else utils.round_to_tick_size(
+                mid * (Decimal(1) - slp) if side == "ask" else mid * (Decimal(1) + slp), tick
+            )
+        )
         return await self._place_order(symbol, side, qty, price, "FrontendMarket", reduce_only)
 
     async def limit_order(

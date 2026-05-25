@@ -277,7 +277,14 @@ class PacificaClient:
         except Exception:
             return None
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         lot_size = await self.get_lot_size(symbol)
         amount = utils.round_to_tick_size(qty, lot_size)
 

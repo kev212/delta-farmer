@@ -31,9 +31,196 @@ class PositionState:
     size: Decimal
 
 
+@dataclass
+class CloseSafetyState:
+    safe: bool
+    reason: str
+    spread_bps_max: Decimal
+    delta_pnl_pct: Decimal
+    total_notional: Decimal
+    total_pnl: Decimal
+
+
 # MARK: Limit order
 
 _LIMIT_PRICE_DRIFT_PCT = Decimal("0.0025")  # 0.25% BBO drift → give up waiting, go to fallback
+
+
+# MARK: Spread & delta-PnL safety
+
+
+async def _check_spread_one(
+    client: TradingClient, symbol: str, max_bps: int
+) -> tuple[bool, Decimal]:
+    """Check spread for one symbol on one client.
+    Returns (ok, spread_bps). max_bps=0 = always ok (disabled)."""
+    bid, ask = await client.get_bbo(symbol)
+    if bid <= 0 or ask <= 0:
+        return False, Decimal(-1)
+    mid = (bid + ask) / 2
+    spread_bps = ((ask - bid) / mid) * Decimal(10000)
+    if max_bps <= 0:
+        return True, spread_bps
+    return spread_bps <= max_bps, spread_bps
+
+
+async def check_open_safe(
+    actions_per_symbol: dict[str, list[TradeAction]],
+    max_spread_bps: int,
+) -> tuple[bool, str]:
+    """Check spread on every leg before opening. Returns (safe, reason)."""
+    if max_spread_bps <= 0:
+        return True, "spread guardrail disabled"
+    for symbol, acts in actions_per_symbol.items():
+        for act in acts:
+            ok, bps = await _check_spread_one(act.client, symbol, max_spread_bps)
+            if not ok:
+                return False, (
+                    f"{act.client.name} {symbol} spread {bps:.1f}bps > {max_spread_bps}bps (open)"
+                )
+    return True, "OK"
+
+
+async def check_close_safe(
+    actions_per_symbol: dict[str, list[TradeAction]],
+    max_spread_bps: int,
+    max_delta_pnl_pct: float,
+) -> CloseSafetyState:
+    """Check spread and delta PnL before closing. Returns CloseSafetyState."""
+    total_pnl = Decimal(0)
+    total_notional = Decimal(0)
+    spread_max = Decimal(0)
+
+    for symbol, acts in actions_per_symbol.items():
+        for act in acts:
+            ok, bps = await _check_spread_one(act.client, symbol, max_spread_bps)
+            if bps > spread_max:
+                spread_max = bps
+            if max_spread_bps > 0 and not ok:
+                return CloseSafetyState(
+                    safe=False,
+                    reason=f"{act.client.name} {symbol} spread {bps:.1f}bps > {max_spread_bps}bps",
+                    spread_bps_max=spread_max,
+                    delta_pnl_pct=Decimal(0),
+                    total_notional=total_notional,
+                    total_pnl=Decimal(0),
+                )
+
+            pos = await _position_state(act.client, symbol)
+            if pos is None or pos.size == 0:
+                return CloseSafetyState(
+                    safe=False,
+                    reason=f"{act.client.name} {symbol} position missing",
+                    spread_bps_max=spread_max,
+                    delta_pnl_pct=Decimal(0),
+                    total_notional=Decimal(0),
+                    total_pnl=Decimal(0),
+                )
+
+            mid_price = await act.client.get_price(symbol)
+            entry_cost = pos.size * pos.entry_price
+            sign = Decimal(1) if pos.side == "bid" else Decimal(-1)
+            pnl = (pos.size * mid_price - entry_cost) * sign
+            total_pnl += pnl
+            total_notional += entry_cost
+
+    if total_notional == 0:
+        return CloseSafetyState(
+            safe=True,
+            reason="no positions",
+            spread_bps_max=spread_max,
+            delta_pnl_pct=Decimal(0),
+            total_notional=Decimal(0),
+            total_pnl=Decimal(0),
+        )
+
+    delta_pct = abs(total_pnl) / total_notional
+    if max_delta_pnl_pct > 0 and delta_pct > Decimal(str(max_delta_pnl_pct)):
+        return CloseSafetyState(
+            safe=False,
+            reason=f"delta PnL {delta_pct:.3%} > {max_delta_pnl_pct:.3%}",
+            spread_bps_max=spread_max,
+            delta_pnl_pct=delta_pct,
+            total_notional=total_notional,
+            total_pnl=total_pnl,
+        )
+
+    return CloseSafetyState(
+        safe=True,
+        reason="OK",
+        spread_bps_max=spread_max,
+        delta_pnl_pct=delta_pct,
+        total_notional=total_notional,
+        total_pnl=total_pnl,
+    )
+
+
+async def wait_safe_close(
+    actions_per_symbol: dict[str, list[TradeAction]],
+    cfg: StrategyConfig,
+    stop_event: asyncio.Event | None = None,
+) -> CloseSafetyState:
+    """Wait until close-safety clears or timeout. Caller must still close regardless."""
+    if cfg.max_spread_close_bps <= 0 and cfg.max_delta_pnl_pct <= 0:
+        return CloseSafetyState(
+            safe=True,
+            reason="all close guards disabled",
+            spread_bps_max=Decimal(0),
+            delta_pnl_pct=Decimal(0),
+            total_notional=Decimal(0),
+            total_pnl=Decimal(0),
+        )
+
+    started = time.time()
+    state: CloseSafetyState | None = None
+    iteration = 0
+
+    while time.time() - started < cfg.close_safety_wait_sec:
+        if stop_event and stop_event.is_set():
+            logger.info("Stop event during close-safety wait, force close")
+            break
+
+        try:
+            state = await check_close_safe(
+                actions_per_symbol,
+                cfg.max_spread_close_bps,
+                cfg.max_delta_pnl_pct,
+            )
+        except Exception as e:
+            logger.warning(f"Close safety check error: {type(e).__name__}: {e}")
+            await asyncio.sleep(cfg.close_safety_poll_sec)
+            continue
+
+        iteration += 1
+        if state.safe:
+            if iteration > 1:
+                logger.info(
+                    f"Close gate cleared after {iteration} polls "
+                    f"({time.time() - started:.0f}s) — spread={state.spread_bps_max:.1f}bps "
+                    f"delta={state.delta_pnl_pct:.3%}"
+                )
+            return state
+
+        elapsed = time.time() - started
+        logger.warning(
+            f"Close gate held [{elapsed:.0f}s/{cfg.close_safety_wait_sec}s]: "
+            f"{state.reason} — waiting {cfg.close_safety_poll_sec}s"
+        )
+        await asyncio.sleep(cfg.close_safety_poll_sec)
+
+    if state is None:
+        state = CloseSafetyState(
+            safe=False,
+            reason="timeout without successful check",
+            spread_bps_max=Decimal(0),
+            delta_pnl_pct=Decimal(0),
+            total_notional=Decimal(0),
+            total_pnl=Decimal(0),
+        )
+    logger.error(
+        f"Close gate timeout after {cfg.close_safety_wait_sec}s: {state.reason} — force closing"
+    )
+    return state
 
 
 async def _fetch_limit_price(
@@ -193,6 +380,8 @@ async def open_positions(acts: list[TradeAction], symbol: str, cfg: StrategyConf
     """Open positions for one symbol. With use_limit: prime account (acts[0]) fills limit first,
     then hedge accounts open via market in parallel. On limit failure with no fallback — abort."""
     all_acts = acts
+    slip = Decimal(str(cfg.market_slippage_open))
+
     if cfg.use_limit:
         prime, acts = acts[0], acts[1:]
         prime.order = await _fill_limit_order(prime.client, symbol, prime.side, prime.qty, cfg)
@@ -200,11 +389,13 @@ async def open_positions(acts: list[TradeAction], symbol: str, cfg: StrategyConf
             await close_all([act.client for act in all_acts])
             return
 
-    rs = await asyncio.gather(*[act.client.market_order(symbol, act.side, act.qty) for act in acts])
+    rs = await asyncio.gather(
+        *[act.client.market_order(symbol, act.side, act.qty, slippage=slip) for act in acts]
+    )
     for act, order in zip(acts, rs):
         act.order = order
         log = logger.bind(account=act.client.name)
-        log.debug(f"Market {act.side} {act.qty} {symbol} filled")
+        log.debug(f"Market {act.side} {act.qty} {symbol} filled (slip={slip})")
 
 
 async def close_symbol_positions(
@@ -212,6 +403,8 @@ async def close_symbol_positions(
 ) -> None:
     """Close this cycle's positions on the given symbol only."""
     assert len(set(acc.name for acc in accs)) == len(accs), "Duplicate accounts in close_positions"
+
+    slip = Decimal(str(cfg.market_slippage_close))
 
     if use_limit:
         prime, accs = accs[0], accs[1:]
@@ -223,8 +416,9 @@ async def close_symbol_positions(
 
     async def _close_market(acc: TradingClient) -> None:
         for pos in [p for p in await acc.positions() if p.symbol == symbol]:
-            await acc.close_position(pos)
-            logger.bind(account=acc.name).debug(f"Closed {pos.size} {symbol} with market order")
+            close_side = opposite_side(pos.side)
+            await acc.market_order(symbol, close_side, pos.size, reduce_only=True, slippage=slip)
+            logger.bind(account=acc.name).debug(f"Closed {pos.size} {symbol} market (slip={slip})")
 
     await asyncio.gather(*[_close_market(acc) for acc in accs])
 

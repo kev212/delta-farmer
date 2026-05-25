@@ -310,7 +310,14 @@ class EtherealClient:
 
         return order
 
-    async def market_order(self, symbol: str, side: Side, qty: Decimal, reduce_only=False) -> Order:
+    async def market_order(
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        reduce_only=False,
+        slippage: Decimal | None = None,
+    ) -> Order:
         return await self._place_order(symbol, side, qty, None, reduce_only)
 
     async def limit_order(
