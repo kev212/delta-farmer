@@ -25,6 +25,46 @@ Automated delta-neutral trading for crypto points farming. Run classic two-sided
 
 ---
 
+## Differences from OG ([vladkens/delta-farmer](https://github.com/vladkens/delta-farmer))
+
+This fork adds three layers of spread and slippage protection not present in the original:
+
+### 1. Configurable slippage (bypasses hardcoded defaults)
+The original hardcodes slippage at 0.5% open / 0.1% close in each client. This fork exposes them as config parameters:
+
+```toml
+market_slippage_open = 0.003      # 0.3% instead of default 0.5%
+market_slippage_close = 0.001     # 0.1% (same as default)
+```
+
+Passed through all 7 exchange clients (`Nado`, `Omni`, `Ethereal`, `Hyena`, `HyperLiquid`, `Pacifica`, `01.xyz`).
+
+### 2. Spread guardrail (auto-skip bad fills)
+Before opening any position, the bot checks BBO spread on every leg. If any leg exceeds `max_spread_open_bps`, the entire cycle is skipped:
+
+```toml
+max_spread_open_bps = 15   # skip if spread > 15bps at open
+max_spread_close_bps = 30  # wait if spread > 30bps before close
+```
+
+Includes `tools/spread_sampler.py` — a CLI utility to observe real BBO spreads and pick realistic thresholds.
+
+### 3. Delta-PnL pre-close gate (prevent bad exits)
+Before closing, the bot checks that the combined PnL across both legs is near zero (as expected in delta-neutral). If spread is wide or PnL is imbalanced, it waits up to `close_safety_wait_sec` for conditions to normalize before force-closing:
+
+```toml
+max_delta_pnl_pct = 0.005         # 0.5% of total notional max imbalance
+close_safety_wait_sec = 300       # max 5 minute wait
+close_safety_poll_sec = 15        # re-check every 15s
+```
+
+### Other additions
+- `docs/SETUP_GUIDE.md` — full setup walkthrough for single and dual-instance farming
+- Tightened default safety limits (`position_roi_limit: 0.5`, `combined_roi_limit: 0.05`, `max_failures: 5`) in example configs
+- All changes are backward-compatible — existing configs work without modification
+
+---
+
 ## What is delta-farmer?
 
 Delta-farmer is a trading bot that automatically opens matched long and short positions on perpetual DEXs. The idea is simple: by holding equal opposite-side trades, your net market exposure stays near zero — you're farming trading volume and protocol points rather than betting on price direction.
