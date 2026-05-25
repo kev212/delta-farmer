@@ -197,6 +197,7 @@ class StrategyConfig(BaseModel):
     use_limit: bool = False
     limit_wait: DurationSec = DurationSec("90s")
     limit_market_fallback: bool = True
+    limit_drift_pct: float = Field(0.0025, gt=0, le=0.05)  # 0.25%, BBO drift before market fallback
     first_as_prime: bool = False
     group_size: int | None = Field(None, ge=2, le=5)
     regroup_interval: DurationSec | None = None

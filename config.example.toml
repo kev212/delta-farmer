@@ -22,6 +22,14 @@ privkey = "your-private-key-here"
 # enabled = false  # Exclude from trading but keep in stats
 
 # ============================================================
+# Limit Order Settings
+# ============================================================
+# BBO drift threshold (fraction, default 0.0025). After limit timeout,
+# if price drifted more than this, cancel limit and fallback to market.
+# 0.001 = 0.1%, 0.0025 = 0.25%, 0.01 = 1%.
+# limit_drift_pct = 0.0025
+
+# ============================================================
 # Slippage Tolerance
 # ============================================================
 # Maximum allowed slippage when submitting market orders.

@@ -821,3 +821,119 @@ async def test_min_sizes_multiple_fail():
     with pytest.raises(RuntimeError) as exc:
         await check_min_trade_sizes([make_action(a, "bid"), make_action(b, "ask")], "BTC")
     assert "a" in str(exc.value) and "b" in str(exc.value)
+
+
+async def test_limit_drift_pct_lower_triggers_market(monkeypatch):
+    """Custom drift_pct=0.2% triggers market fallback when drift=0.22% > 0.2%."""
+    a = MockClient("a")
+    monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
+    qty = Decimal("0.002")
+
+    async def open_limit(s, side, q, price, reduce_only=False):
+        return Order(
+            id="ord-l",
+            symbol=s,
+            side=side,
+            size=q,
+            filled=Decimal(0),
+            price=price,
+            status=OrderStatus.OPEN,
+        )
+
+    async def still_open(oid):
+        return Order(
+            id=oid,
+            symbol="BTC",
+            side="bid",
+            size=qty,
+            filled=Decimal(0),
+            price=Decimal("49999"),
+            status=OrderStatus.OPEN,
+        )
+
+    bbo_calls = 0
+
+    async def drifted_bbo(symbol):
+        nonlocal bbo_calls
+        bbo_calls += 1
+        if bbo_calls == 1:
+            return Decimal("49999"), Decimal("50001")  # placement
+        return Decimal("49880"), Decimal("50120")  # drift ~0.22% > 0.2% but < 0.25%
+
+    a.limit_order = open_limit  # type: ignore[method-assign]
+    a.get_order = still_open  # type: ignore[method-assign]
+    a.get_bbo = drifted_bbo  # type: ignore[method-assign]
+
+    result = await fill_limit_order(
+        a,
+        "BTC",
+        "bid",
+        qty,
+        timeout=0,
+        use_market_fallback=True,
+        drift_pct=Decimal("0.002"),  # 0.2%
+    )
+    assert result is not None
+    assert result.status == OrderStatus.FILLED
+    assert "cancel_order" in a.calls
+    assert "market_order" in a.calls
+
+
+async def test_limit_drift_pct_custom_stays(monkeypatch):
+    """Custom drift_pct=0.2% stays (no fallback) when drift=0.10% < 0.2%."""
+    a = MockClient("a")
+    monkeypatch.setattr("strategy.execution.asyncio.sleep", _instant_sleep)
+    qty = Decimal("0.002")
+    get_order_calls = 0
+    bbo_calls = 0
+
+    async def open_limit(s, side, q, price, reduce_only=False):
+        return Order(
+            id="ord-l",
+            symbol=s,
+            side=side,
+            size=q,
+            filled=Decimal(0),
+            price=price,
+            status=OrderStatus.OPEN,
+        )
+
+    async def fills_on_second(oid):
+        nonlocal get_order_calls
+        get_order_calls += 1
+        if get_order_calls == 1:
+            return Order(
+                id=oid,
+                symbol="BTC",
+                side="bid",
+                size=qty,
+                filled=Decimal(0),
+                price=Decimal("50010"),
+                status=OrderStatus.OPEN,
+            )
+        return make_order(oid, "BTC", "bid", qty)
+
+    async def drifted_bbo(symbol):
+        nonlocal bbo_calls
+        bbo_calls += 1
+        if bbo_calls == 1:
+            return Decimal("50000"), Decimal("50020")  # placement, mid=50010
+        return Decimal("49920"), Decimal("50080")  # drift ~0.10% < 0.2%
+
+    a.limit_order = open_limit  # type: ignore[method-assign]
+    a.get_order = fills_on_second  # type: ignore[method-assign]
+    a.get_bbo = drifted_bbo  # type: ignore[method-assign]
+
+    result = await fill_limit_order(
+        a,
+        "BTC",
+        "bid",
+        qty,
+        timeout=0,
+        use_market_fallback=True,
+        drift_pct=Decimal("0.002"),  # 0.2%
+    )
+    assert result is not None
+    assert result.status == OrderStatus.FILLED
+    assert "cancel_order" not in a.calls
+    assert "market_order" not in a.calls

@@ -43,7 +43,9 @@ class CloseSafetyState:
 
 # MARK: Limit order
 
-_LIMIT_PRICE_DRIFT_PCT = Decimal("0.0025")  # 0.25% BBO drift → give up waiting, go to fallback
+# reference: 0.25% BBO drift → give up waiting, go to fallback
+# configurable via StrategyConfig.limit_drift_pct (default 0.0025)
+_DRIFT_REF = Decimal("0.0025")
 
 
 # MARK: Spread & delta-PnL safety
@@ -239,6 +241,7 @@ async def fill_limit_order(
     reduce_only=False,
     timeout=60,
     use_market_fallback=True,
+    drift_pct: Decimal = Decimal("0.0025"),
 ) -> Order | None:
     """Place limit order and wait for fill with optional market fallback."""
     tick_size = await client.get_tick_size(symbol)
@@ -290,15 +293,17 @@ async def fill_limit_order(
         if (time.time() - check_time) > timeout:
             current_price = await _fetch_limit_price(client, symbol, side, tick_size)
             drift = abs(current_price - price) / price
-            if drift <= _LIMIT_PRICE_DRIFT_PCT:
+            if drift <= drift_pct:
                 if not bbo_stable_warned:
-                    log.debug(f"Limit timeout but BBO stable (drift={drift:.3%}), continuing wait")
+                    log.debug(f"Limit timeout BBO stable (drift={drift:.3%}/{drift_pct:.3%})")
                     bbo_stable_warned = True
                 started_at, filled_since = time.time(), None
                 continue
 
             bbo_stable_warned = False
-            log.debug(f"Limit order timeout after {timeout}s (BBO drift {drift:.3%})")
+            log.debug(
+                f"Limit order timeout after {timeout}s (BBO drift {drift:.3%} > {drift_pct:.3%})"
+            )
             await client.cancel_order(order)
             remaining = order.size - order.filled
             if use_market_fallback and remaining > 0:
@@ -357,6 +362,7 @@ async def _fill_limit_order(
         reduce_only=reduce_only,
         timeout=cfg.limit_wait,
         use_market_fallback=cfg.limit_market_fallback,
+        drift_pct=Decimal(str(cfg.limit_drift_pct)),
     )
 
 

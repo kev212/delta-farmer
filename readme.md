@@ -262,6 +262,7 @@ Only relevant when `use_limit = true`.
 | ----------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
 | `limit_wait`            | `"90s"` | How long to wait for a limit order to fill.                                                           |
 | `limit_market_fallback` | `true`  | If the limit order times out, fall back to a market order. Set to `false` to abort the cycle instead. |
+| `limit_drift_pct`       | `0.0025`| BBO drift threshold (fraction). After timeout, if price drifted more than this, cancel limit and fallback to market. Range: 0–0.05 (0–5%). |
 
 ### Safety limits
 
