@@ -216,7 +216,7 @@ async def run_groups(cfg: StrategyConfig, accs: Sequence[TradingClient]) -> None
     cfg, accs = _check_cfg(cfg, accs)
     await _warmup_all(accs)
 
-    tg.start()
+    tg.start(accs)
     telemetry.track(
         "trade_started",
         {

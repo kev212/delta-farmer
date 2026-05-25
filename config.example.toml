@@ -60,3 +60,4 @@ close_safety_poll_sec = 15        # poll every 15 seconds
 # [telegram]
 # token = "bot-token"
 # chat_id = 123456789
+# commands_enabled = true     # Enable command menu (/info, /positions, /spread BTC, etc)

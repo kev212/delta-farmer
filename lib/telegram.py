@@ -3,6 +3,7 @@
 import asyncio
 import time
 from datetime import UTC, datetime
+from typing import Any, Sequence
 
 from curl_cffi.requests import AsyncSession
 
@@ -18,6 +19,8 @@ _stats: dict[str, dict] = {}
 class _State:
     exchange: str = ""
     cfg: TgConfig = TgConfig()
+    accounts: Sequence[Any] = []
+    stats: dict[str, dict] = {}
 
 
 _state = _State()
@@ -169,7 +172,7 @@ async def _report_loop(interval: int) -> None:
         raise
 
 
-def start() -> None:
+def start(accounts: Sequence[Any] | None = None) -> None:
     if not enabled():
         return
 
@@ -177,11 +180,22 @@ def start() -> None:
     if isinstance(data, dict):
         _stats.update(data)
 
-    if "reports" not in _state.cfg.notify:
-        return
+    # share stats dict with commands module
+    _state.stats = _stats
+    if accounts:
+        _state.accounts = list(accounts)
 
     try:
         loop = asyncio.get_running_loop()
+
+        if _state.cfg.commands_enabled:
+            from .telegram_commands import _polling_loop
+
+            loop.create_task(_polling_loop(), name="telegram-commands")
+
+        if "reports" not in _state.cfg.notify:
+            return
+
         loop.create_task(_report_loop(_state.cfg.report_interval), name="telegram-report")
     except RuntimeError:
         pass

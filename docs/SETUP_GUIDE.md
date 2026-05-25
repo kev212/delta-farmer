@@ -246,6 +246,21 @@ uv run apps/omni.py stats -c configs/omni.toml last
 
 Enable di config `[telegram]` section. Aktifin channel `"errors"` minimal — lo tau kalau ada yg crash.
 
+### Telegram Command Menu
+
+Set `commands_enabled = true` di `[telegram]` section buat enable interactive command menu:
+
+```toml
+[telegram]
+token = "your-token"
+chat_id = "your-chat-id"
+commands_enabled = true
+```
+
+Available commands: `/info`, `/positions`, `/balance`, `/spread BTC`, `/stats`, `/uptime`, `/help`.
+
+Cuma chat_id yang terdaftar di config yang bisa kirim command (authorized-only).
+
 ---
 
 ## Troubleshooting

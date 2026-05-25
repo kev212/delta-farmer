@@ -18,7 +18,8 @@ Delta-neutral trading bot. Exchanges: Ethereal, Hyena, Nado, Omni, Onyx, Pacific
 | `lib/models.py`          | `DurationSec`, `SizeRange`, `TimeRange`, `TgConfig`, `AccountConfig`                                                                                |
 | `lib/decorators.py`      | `retry`, `ttl_cache`, `bind_log_context`                                                                                                            |
 | `lib/utils.py`           | math, time, file I/O, `random_partition`, `find_safe_pair`, async helpers                                                                           |
-| `lib/telegram.py`        | notifications: `on_trade_start/stop`, `on_error`, `on_crash`                                                                                        |
+| `lib/telegram.py`        | notifications: `on_trade_start/stop`, `on_error`, `on_crash`                                                                                |
+| `lib/telegram_commands.py` | Telegram command polling loop + handlers (`/info`, `/positions`, `/spread`, `/balance`, etc). Read-only. Single chat auth.             |
 | `clients/hyperliquid.py` | `HyperLiquidClient` — **internal base class** for HL-family exchanges; HIP-3 aware. Not a supported exchange for end users.                         |
 | `clients/{exchange}.py`  | implement `TradingClient` (or extend `HyperLiquidClient`)                                                                                           |
 | `apps/{exchange}.py`     | CLI launcher per exchange                                                                                                                           |

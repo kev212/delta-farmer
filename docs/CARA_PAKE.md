@@ -130,6 +130,24 @@ File: `configs/omni.toml`
 
 ---
 
+## Telegram Command Menu
+
+Kalau udah setup Telegram token & set `commands_enabled = true` di config, lo bisa chat bot lo dari HP buat:
+
+| Command | Fungsi |
+|---|---|
+| `/info` | Balance & akun |
+| `/positions` | Posisi open sekarang |
+| `/balance` | Balance per wallet |
+| `/spread BTC` | Spread BBO real-time BTC |
+| `/stats` | Stats period |
+| `/uptime` | Bot running time |
+| `/help` | Menu lengkap |
+
+**Catatan:** Cuma lo yang punya akses (chat_id di config). Orang lain gabisa.
+
+---
+
 ## Catatan
 
 - **Jangan share configs/omni.toml** (isinya privkey walaupun udah encrypt)

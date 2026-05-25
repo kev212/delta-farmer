@@ -78,6 +78,7 @@ class TgConfig(BaseModel):
     chat_id: str = ""
     notify: list[str] = ["start", "stop", "errors", "reports"]
     report_interval: DurationSec = Field(default=DurationSec("1h"))
+    commands_enabled: bool = False  # enable Telegram command menu (/info, /positions, etc)
 
     @field_validator("token", mode="before")
     @classmethod

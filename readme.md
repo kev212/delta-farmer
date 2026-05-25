@@ -19,6 +19,7 @@ Automated delta-neutral trading for crypto points farming. Run classic two-sided
 - 📊 **Real-time safety checks** — emergency close if ROI limits are breached
 - 🔐 **Encrypted key storage** — private keys never sit in plaintext
 - 📨 **Telegram notifications** — get alerts on trade start, stop, errors, and periodic reports
+- 🤖 **Telegram commands** — read-only command menu (/info, /positions, /spread, /balance, etc)
 - 🎲 **Configurable sizing and timing** — randomized sizes and durations to vary on-chain patterns
 - 🛡️ **Slippage & spread guardrails** — configurable slippage tolerance and auto-skip cycles when spreads are too wide
 - ⚖️ **Delta-PnL safety gate** — holds close until spread normalizes and PnL rebalances, preventing bad exits
@@ -328,6 +329,7 @@ Add a `[telegram]` block to enable notifications.
 | `chat_id`         | —            | Your personal or group chat ID. Get it from [@userinfobot](https://t.me/userinfobot).                              |
 | `notify`          | all channels | List of notification channels to enable. Remove any to silence them: `"start"`, `"stop"`, `"errors"`, `"reports"`. |
 | `report_interval` | `"1h"`       | How often to send a periodic stats digest.                                                                         |
+| `commands_enabled`| `false`      | Enable interactive command menu (`/info`, `/positions`, `/spread BTC`, etc). Read-only commands only.               |
 
 ---
 
