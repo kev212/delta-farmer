@@ -20,6 +20,8 @@ Automated delta-neutral trading for crypto points farming. Run classic two-sided
 - 🔐 **Encrypted key storage** — private keys never sit in plaintext
 - 📨 **Telegram notifications** — get alerts on trade start, stop, errors, and periodic reports
 - 🎲 **Configurable sizing and timing** — randomized sizes and durations to vary on-chain patterns
+- 🛡️ **Slippage & spread guardrails** — configurable slippage tolerance and auto-skip cycles when spreads are too wide
+- ⚖️ **Delta-PnL safety gate** — holds close until spread normalizes and PnL rebalances, preventing bad exits
 
 ---
 
@@ -141,6 +143,10 @@ You'll be prompted for a password. After this step, the raw keys are replaced wi
 uv run apps/<app>.py trade
 ```
 
+### Detailed Setup Guide
+
+For a complete walkthrough covering wallet setup, spread sampling, burn rate optimization, and production deployment, see [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).
+
 ---
 
 ## Commands
@@ -168,6 +174,9 @@ uv run apps/<app>.py config decrypt        # Decrypt to view raw keys
 
 # Help
 uv run apps/<app>.py --help
+
+# Spread sampler (tune guardrail thresholds)
+uv run tools/spread_sampler.py --exchange nado --symbols BTC,ETH --duration 600
 ```
 
 ---
@@ -221,6 +230,34 @@ Only relevant when `use_limit = true`.
 | `position_roi_limit` | `0.8`   | Emergency-close the full cycle if any single position reaches ±80% ROI.                                                                                     |
 | `combined_roi_limit` | `0.1`   | Emergency-close if the combined basket ROI reaches ±10%.                                                                                                    |
 | `max_failures`       | `0`     | Stop the strategy after this many consecutive cycle failures. `0` = never stop — retries indefinitely with exponential backoff (up to 1h between attempts). |
+
+### Slippage tolerance
+
+Controls how much slippage to allow on market orders. Overrides hardcoded exchange defaults.
+
+| Parameter                 | Default | Description                                                                                 |
+| ------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `market_slippage_open`    | `0.005` | Max slippage when opening positions (0.5%). Range: 0–0.05 (0–5%).                           |
+| `market_slippage_close`   | `0.001` | Max slippage when closing positions (0.1%). Range: 0–0.05 (0–5%).                           |
+
+### Spread guardrail
+
+Skip the cycle if BBO spread exceeds the threshold. Useful for avoiding bad fills during volatile markets. Set to `0` to disable.
+
+| Parameter              | Default | Description                                                       |
+| ---------------------- | ------- | ----------------------------------------------------------------- |
+| `max_spread_open_bps`  | `0`     | Skip cycle if any leg's spread > this value (in bps) at open.     |
+| `max_spread_close_bps` | `0`     | Wait for spread to normalize before closing (in bps).             |
+
+### Delta-PnL gate (close-time safety)
+
+Before closing, the bot checks that the total combined PnL is balanced (near zero as expected in delta-neutral). If spread or PnL deviates, it waits for conditions to improve before force-closing.
+
+| Parameter                | Default | Description                                                   |
+| ------------------------ | ------- | ------------------------------------------------------------- |
+| `max_delta_pnl_pct`      | `0`     | Max allowed delta PnL as fraction of notional (`0.005` = 0.5%). `0` = disabled. |
+| `close_safety_wait_sec`  | `300`   | Max wait before force-closing (seconds).                      |
+| `close_safety_poll_sec`  | `15`    | How often to re-check conditions (seconds).                   |
 
 ### Grouped trading
 
@@ -301,11 +338,41 @@ Rules:
 
 ## Safety Checks
 
-Every `trade_heartbeat` interval (default 15 seconds), the bot checks:
+### Runtime checks (every heartbeat)
+
+`trade_heartbeat` interval (default 15 seconds), the bot checks:
 
 1. **Per-position ROI** — if any single leg's return crosses `±position_roi_limit` (default ±80%), all positions are closed immediately
 2. **Combined basket ROI** — if the total basket return crosses `±combined_roi_limit` (default ±10%), all positions are closed immediately
 3. **Position count** — if any symbol has an unexpected number of positions (e.g. one side was liquidated), all positions are closed immediately
+
+### Pre-open spread guardrail
+
+Before opening, the bot checks BBO spread on every leg. If any leg exceeds `max_spread_open_bps`, the entire cycle is skipped — avoiding bad fills in thin markets.
+
+### Pre-close safety gate
+
+Before closing, the bot waits for two conditions to clear:
+
+1. **Spread** — all legs' BBO spread must be below `max_spread_close_bps`
+2. **Delta PnL** — total combined PnL must stay within `max_delta_pnl_pct` of notional (i.e., the delta-neutral hedge is still balanced)
+
+If conditions don't improve within `close_safety_wait_sec`, the bot force-closes anyway (holding longer is riskier). This prevents bad exits when prices are volatile.
+
+### Spread sampler
+
+Use the built-in sampler to observe real BBO spreads before setting thresholds:
+
+```bash
+uv run tools/spread_sampler.py --exchange omni --symbols BTC,ETH,SOL,HYPE --duration 600
+```
+
+Output example:
+```
+  BTC:  min=2.1  p25=4.3  p50=5.8  p75=10.1  p95=22.0  mean=7.2 bps
+```
+
+Set `max_spread_open_bps` based on the p75 value plus a buffer (e.g., p75=10 → set 15).
 
 These are last-resort protections. You should also use sensible leverage and trade sizes.
 
